@@ -254,12 +254,15 @@ def _update_merge_append(
             base_login = new_row.get("base_login")
             if (base_name == "apache:master" or base_name == "master") and base_login == "apache":
                 if id in visited_merged:
-                    raise ValueError(f"Double merge {id}")
+                    # raise ValueError(f"Double merge {id}")
+                    print(f"Double merge {id}")
+                    # TODO? add in append
                 visited_merged.add(id)
                 old_row.update(new_row)
             else:
                 # Merged to other branch
                 print(f"BP merge {id}, merged to {base_name}, user_login {base_login}")
+                # abort now
         else:
             append_rows.append(new_row)
 
@@ -304,13 +307,13 @@ def collect_files_changed(crawler: GitHubRESTCrawler, pull_number: int) -> list[
                 per_page=per_page,
                 page=page,
             )
+            time.sleep(API_CALL_DELAY)
             if not batch:
                 break
             pr_files.extend(batch)
             if len(batch) < per_page:
                 break
             page += 1
-            time.sleep(API_CALL_DELAY)
 
     return list(filter(None, [f.get("filename") for f in pr_files]))
 
@@ -328,11 +331,18 @@ def collect_get_pr_detail(crawler: GitHubRESTCrawler, pull_number: int):
     pr_detail, cached = _load_cached_pull_request(pull_number)
     if not cached:
         pr_detail = crawler.get_pull(pull_number)
-    pr_detail_title_chars = len(str(pr_detail.get("title", "").strip()))
-    pr_detail_body_chars = len(str(pr_detail.get("body", "").strip()))
+        time.sleep(API_CALL_DELAY)
+    # print(pr_detail)
+    t = pr_detail.get("title","")
+    if t is None:
+        t = ""
+    b = pr_detail.get("body","")
+    if b is None:
+        b = ""
+    pr_detail_title_chars = len(t.strip())
+    pr_detail_body_chars = len(b.strip())
     pr_detail_comments_count = pr_detail.get("comments", 0)
     pr_detail_review_comments_count = pr_detail.get("review_comments", 0)
-
     return {
         "pr_detail_title_chars": pr_detail_title_chars,
         "pr_detail_body_chars": pr_detail_body_chars,
@@ -353,13 +363,13 @@ def collect_review_comments(crawler: GitHubRESTCrawler, pull_number: int):
             batch = crawler.list_pull_review_comments(
                 pull_number, per_page=per_page, page=page
             )
+            time.sleep(API_CALL_DELAY)
             if not batch:
                 break
             review_comments.extend(batch)
             if len(batch) < per_page:
                 break
             page += 1
-            time.sleep(API_CALL_DELAY)
     for comment in review_comments:
         text = str(comment.get("body","").strip())
         review_comments_chars += len(text)
@@ -393,13 +403,13 @@ def collect_issue_comments(
                 per_page=per_page,
                 page=page,
             )
+            time.sleep(API_CALL_DELAY)
             if not batch:
                 break
             issue_comments.extend(batch)
             if len(batch) < per_page:
                 break
             page += 1
-            time.sleep(API_CALL_DELAY)
 
     for comment in issue_comments:
         text = str(comment.get("body") or "").strip()
@@ -488,7 +498,6 @@ def summarize_pulls(
         # Call other APIs
         pr_detail: dict = collect_get_pr_detail(crawler, pull_number)
         files_changed: list[str] = collect_files_changed(crawler, pull_number)
-        time.sleep(API_CALL_DELAY)
         issue_comments_detail = collect_issue_comments(crawler, pull_number)
         review_comments_detail = collect_review_comments(crawler, pull_number)
 
