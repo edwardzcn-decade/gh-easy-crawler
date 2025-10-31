@@ -22,6 +22,7 @@ import requests
 
 from pathlib import Path
 from typing import Optional
+from enum import StrEnum
 
 APP_NAME = "CDCCrawler"
 APP_VERSION = "0.1.0"
@@ -40,6 +41,18 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_CLI_API_TOKEN")
 GITHUB_REPO_OWNER = "apache"
 GITHUB_REPO_NAME = "flink-cdc"
 
+
+class SupportMediaTypes(StrEnum):
+    """Supported Media Types for GitHub API"""
+
+    DEFAULT = "application/vnd.github+json"
+    RAW = "application/vnd.github.raw+json"
+    TEXT = "application/vnd.github.text+json"
+    HTML = "application/vnd.github.html"
+    # return all
+    FULL = "application/vnd.github.full+json"
+
+
 class GitHubCrawlerBase:
     """Base class for GitHub Crawlers"""
 
@@ -53,9 +66,9 @@ class GitHubCrawlerBase:
         """
         self.user_name = GITHUB_USER_NAME
         self.user_email = GITHUB_USER_EMAIL
-        self.token = token or os.getenv("GITHUB_TOKEN")
         self.repo_owner = owner or GITHUB_REPO_OWNER
         self.repo_name = repo or GITHUB_REPO_NAME
+        self.token = token or os.getenv("GITHUB_TOKEN")
 
         self.output_dir = Path("output")
         self.output_dir.mkdir(exist_ok=True)
@@ -95,31 +108,33 @@ class GitHubCrawlerBase:
 class GitHubRESTCrawler(GitHubCrawlerBase):
     """GitHub Crawler using REST API"""
 
-    def __init__(self, repo: str | None = None, token: str | None = None):
-        super().__init__(repo, token)
+    def __init__(self,owner: str | None = None, repo: str | None = None, token: str | None = None):
+        super().__init__(owner, repo, token)
         self.base_url = GITHUB_API_URL
         self.headers = self._get_headers()
 
+    def _get_default_accept_header(self):
+        return SupportMediaTypes.DEFAULT
+
     def _get_headers(self):
         user_agent = f"{APP_NAME}/{APP_VERSION}"
+        media_type = self._get_default_accept_header().value
         headers = {
-            "Accept": "application/vnd.github.v3+json",
+            "Accept": media_type,
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent:" : user_agent,
-            }
+            "User-Agent": user_agent,
+        }
         if self.token:
             headers["Authorization"] = f"token {self.token}"
         return headers
 
     def get_zen(self):
-        url = f"{GITHUB_API_URL}/zen"
-        response = requests.get(url, headers=self._get_headers())
+        request_url = f"{GITHUB_API_URL}/zen"
+        response = requests.get(request_url, headers=self.headers)
         response.raise_for_status()
         zen = response.text
         print(f"GitHub Zen: {zen}")
         return zen
-
-
 
     def list_prs(self):
         request_url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/pulls"
@@ -127,11 +142,36 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         # response = requests.get(
         #     request_url, request_headers, params={"state": "all"}
         # )
-        response = requests.get(
-            request_url, headers=request_headers
-        )
+        response = requests.get(request_url, headers=request_headers)
         response.raise_for_status()
         prs = response.json()
         self.save_json(prs, "pull_requests.json")
 
+    def get_readme(self):
+        request_url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/readme"
+        request_headers = self.headers
+        response = requests.get(request_url, headers=request_headers)
+        response.raise_for_status()
+        readme = response.json()
+        self.save_json(readme, "readme.json")
 
+    def get_user(self):
+        requests_url = f"{self.base_url}/user"
+        request_headers = self.headers
+        response = requests.get(requests_url, headers=request_headers)
+        response.raise_for_status()
+        user = response.json()
+        print(f"Authenticated user: {user}")
+
+def main():
+    crawler = GitHubRESTCrawler(token=GITHUB_TOKEN)
+    try:
+        crawler.get_zen()
+        crawler.get_user()
+        crawler.list_prs()
+    except Exception as e:
+        print(f"Error occurred: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
