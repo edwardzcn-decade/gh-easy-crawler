@@ -8,7 +8,18 @@ Base classes and utilities for GitHub Crawler implementations (REST or GitHub CL
 import json
 import sys
 from abc import ABC, abstractmethod
-from .config import *
+
+from .config import (
+    APP_NAME,
+    APP_VERSION,
+    GITHUB_USER_NAME,
+    GITHUB_USER_EMAIL,
+    GITHUB_REPO_NAME,
+    GITHUB_REPO_OWNER,
+    GITHUB_API_VERSION,
+    GITHUB_API_URL,
+    OUTPUT_DIR_DEFAULT,
+)
 
 
 class GitHubCrawlerBase(ABC):
@@ -101,7 +112,47 @@ class GitHubCrawlerBase(ABC):
         """
         Abstract method to perform a GET request
         REST subclasses should use requests.get();
-        CLI subclasses should use subprocess.run("gh api ...").
-        :param url: Full URL to send the GET request to
+        CLI subclasses should use subprocess.run("gh api --method GET ...").
+        :param url: Full/endpoint URL to send the GET request to
+        """
+        pass
+
+    @abstractmethod
+    def _patch_request(self, url: str, **kwargs):
+        """
+        Abstract method to perform a PATCH request
+        REST subclasses should use requests.patch();
+        CLI subclasses should use subprocess.run("gh api --method PATCH ...").
+        :param url: Full/endpoint URL to send the PATCH request to
+        """
+        pass
+
+    @abstractmethod
+    def _put_request(self, url: str, **kwargs):
+        """
+        Abstract method to perform a PUT request
+        REST subclasses should use requests.put();
+        CLI subclasses should use subprocess.run("gh api --method PUT ...").
+        :param url: Full/endpoint URL to send the PUT request to
+        """
+        pass
+
+    @abstractmethod
+    def _post_request(self, url: str, **kwargs):
+        """
+        Abstract method to perform a POST request
+        REST subclasses should use requests.post();
+        CLI subclasses should use subprocess.run("gh api --method POST ...").
+        :param url: Full/endpoint URL to send the POST request to
+        """
+        pass
+
+    @abstractmethod
+    def _delete_request(self, url: str, **kwargs):
+        """
+        Abstract method to perform a DELETE request
+        REST subclasses should use requests.delete();
+        CLI subclasses should use subprocess.run("gh api --method DELETE ...").
+        :param url: Full/endpoint URL to send the DELETE request to
         """
         pass

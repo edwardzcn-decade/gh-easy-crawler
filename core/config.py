@@ -5,7 +5,6 @@
 Configuration and global constants for GitHub Crawler
 """
 
-
 import os
 from pathlib import Path
 from enum import StrEnum
@@ -51,6 +50,7 @@ class SupportMediaTypes(StrEnum):
 
     # def _get_default_media_type_str(self) -> str:
     #     return SupportMediaTypes.DEFAULT.value
+
 
 # Util functions
 def get_github_token_default() -> str | None:
