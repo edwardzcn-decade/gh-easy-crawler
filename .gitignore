@@ -1,8 +1,12 @@
 .venv/
+.vscode/
 venv/
 env/
 bin/
 lib/
 include/
 /output
+/test_ouput
+/tests/__pycache__
+/core/__pycache__
 .python-version

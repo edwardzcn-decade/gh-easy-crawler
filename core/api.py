@@ -461,3 +461,140 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             f.write(rendered)
         print(f"[GitHubRESTCrawler] Raw markdown rendered -> {output_path}")
         return rendered
+
+    def list_repo_issue_comments(
+        self,
+        sort: str | None = None,
+        direction: str | None = None,
+        since: str | None = None,
+        per_page: int = 30,
+        page: int = 1,
+    ) -> list[dict[str, Any]]:
+        """
+        List issue comments for a repository
+        GitHub Docs
+        https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#list-issue-comments-for-a-repository
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments"
+        params: dict[str, Any] = {"per_page": per_page, "page": page}
+        # The `direction` parameter only takes effect when `sort` is explicitly specified.
+        # Default behavior is sorted by `created` `desc`
+        if sort is not None:
+            params["sort"] = sort
+            if direction is not None:
+                params["direction"] = direction
+        elif direction is not None:
+            print("⚠️ Ignoring direction since sort is not specified.")
+        if since is not None:
+            params["since"] = since
+        resp = self._get_request(url, params=params)
+        comments = resp.json()
+        self._save_json_output(
+            comments,
+            f"repo_issue_comments_{sort}_page_{page}.json",
+            post_msg=f"Fetched {len(comments)} repo issue comments (sort={sort}).",
+        )
+        return comments
+
+    def list_issue_comments(
+        self,
+        issue_number: int,
+        since: str | None = None,
+        per_page: int = 30,
+        page: int = 1,
+    ) -> list[dict[str, Any]]:
+        """
+        List issue comments with specific `issue_number` (Every pr is an issue, but not every issue is a pr)
+        GitHub Docs
+        https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#list-issue-comments
+        """
+        url = (
+            f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/comments"
+        )
+        params: dict[str, Any] = {"per_page": per_page, "page": page}
+        if since is not None:
+            params["since"] = since
+        resp = self._get_request(url, params=params)
+        comments = resp.json()
+        self._save_json_output(
+            comments,
+            f"issue_{issue_number}_comments_page_{page}.json",
+            post_msg=f"Fetched {len(comments)} comments for issue #{issue_number}.",
+        )
+        return comments
+
+    def create_single_issue_comment(
+        self,
+        issue_number: int,
+        body: str
+    ) -> dict[str, Any]:
+        """
+        Create an issue comment
+        GitHub Docs
+        https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#create-an-issue-comment
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/comments"
+        payload: dict[str, Any] = {"body": body}
+        resp = self._post_request(url, payload=payload)
+        resp.raise_for_status()
+        created_comment = resp.json()
+        new_comment_id = created_comment.get("id", "unknown")
+        self._save_json_output(
+            created_comment,
+            f"issue_comment_{new_comment_id}_created.json",
+            post_msg=f"Issue comment #{new_comment_id} for issue #{issue_number} created.",
+        )
+        return created_comment
+
+    def get_single_issue_comment(
+        self,
+        comment_id: int,
+    ) -> dict[str, Any]:
+        """
+        Get an issue comment with specific `comment_id`
+        GitHub Docs
+        https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#get-an-issue-comment
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments/{comment_id}"
+        resp = self._get_request(url)
+        comment = resp.json()
+        self._save_json_output(
+            comment,
+            f"issue_comment_{comment_id}.json",
+            post_msg=f"Issue comment #{comment_id} fetched.",
+        )
+        return comment
+
+    def update_single_issue_comment(self, comment_id: int, body: str) -> dict[str, Any]:
+        """
+        Update an issue comment
+        GitHub Docs
+        https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#update-an-issue-comment
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments/{comment_id}"
+        payload: dict[str, Any] = {"body": body}
+        resp = self._patch_request(url, payload=payload)
+        updated_comment = resp.json()
+        self._save_json_output(
+            updated_comment,
+            f"issue_comment_{comment_id}_updated.json",
+            post_msg=f"Issue comment #{comment_id} updated.",
+        )
+        return updated_comment
+
+    def delete_single_issue_comment(
+        self,
+        comment_id: int,
+    ):
+        """
+        Delete an issue comment
+        GitHub Docs
+        https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#delete-an-issue-comment
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments/{comment_id}"
+        resp = self._delete_request(url)
+        print(
+            f"[GitHubRESTCrawler] Delete issue comment #{comment_id}. HTTP response status {resp.status_code}"
+        )
+        return resp.status_code
+

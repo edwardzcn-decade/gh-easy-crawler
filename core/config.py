@@ -28,14 +28,19 @@ GITHUB_USER_EMAIL = os.getenv("GITHUB_USER_EMAIL", "edwardzcn98@gmail.com")
 # https://github.com/octocat/Hello-World
 GITHUB_REPO_OWNER = os.getenv("GITHUB_REPO_OWNER", "octocat")
 GITHUB_REPO_NAME = os.getenv("GITHUB_REPO_NAME", "Hello-World")
+# Default test repository (should be private) to run UTs
+# Make sure you have required permission sets
+GITHUB_REPO_OWNER_TEST = os.getenv("GITHUB_REPO_OWNER_TEST", "edwardzcn-decade")
+GITHUB_REPO_NAME_TEST = os.getenv("GITHUB_REPO_NAME_TEST", "gh-api-test-repo")
 
 # Token from environment variable
 GITHUB_TOKEN_DEFAULT = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_CLI_API_TOKEN")
+GITHUB_TOKEN_TEST = None
 
 # Output directory
 # TODO: Make configurable and add sqlite support
 OUTPUT_DIR_DEFAULT = Path("output")
-
+OUTPUT_DIR_TEST = Path("test_output")
 
 # Supported Media Types for GitHub API
 class SupportMediaTypes(StrEnum):
@@ -56,6 +61,13 @@ class SupportMediaTypes(StrEnum):
 def get_github_token_default() -> str | None:
     """Get GitHub token from environment variables."""
     return GITHUB_TOKEN_DEFAULT
+
+def get_github_token_test() -> str | None:
+    """Get GitHub token used for UTs"""
+    if GITHUB_TOKEN_TEST is not None:
+        return GITHUB_TOKEN_TEST
+    else:
+        return GITHUB_TOKEN_DEFAULT
 
 
 def unwrap_or(x, default):
