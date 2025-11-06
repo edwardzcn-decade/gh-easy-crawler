@@ -220,7 +220,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return repo_info
 
-    # 📦 Issue
+    # 📦 Issues
     def list_user_issues(
         self,
         filter: str = "assigned",
@@ -256,9 +256,16 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
 
     def list_repo_issues(
         self,
+        milestone: list[str] | None = None,
         state: str = "open",
-        assignee: str | None = None,
-        issue_type: str | None = None,
+        assignee_list: list[str] | None = None,
+        issue_type_list: list[str] | None = None,
+        creator: str | None = None,
+        mentioned: str | None = None,
+        label_list: list[str] | None = None,
+        sort: str | None = None,
+        direction: str | None = None,
+        since: str | None = None,
         per_page: int = 30,
         page: int = 1,
     ) -> list[dict[str, Any]]:
@@ -266,18 +273,61 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         List issues in the repository.
         GitHub Docs:
         https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28#list-repository-issues
-        TODO full parameter/filter support
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues"
-        params = {"state": state, "per_page": per_page, "page": page}
-        if assignee:
-            params["assignee"] = assignee
-        if issue_type:
-            params["type"] = issue_type
+        params: dict[str, Any] = {"state": state, "per_page": per_page, "page": page}
+        if milestone is not None:
+            # like milestone in update_issue
+            if len(milestone) == 0:
+                params["milestone"] = "none"
+            elif len(milestone) == 1:
+                params["milestone"] = milestone[0]
+            else:
+                raise ValueError(
+                    'Invalid `milestone` field in the param: expected an empty list [] or ["none"] to get issues without milestones '
+                    'or a single-element list ["*"] to get issues with any milstone '
+                    'or ["i"] an `integer` to get issues by `number` field.'
+                )
+        if assignee_list is not None:
+            # Pass `none` for issues with no assigned user,
+            # or `*` for issues assigned to any user
+            if len(assignee_list) == 0:
+                # Pass empty list
+                params["assignee"] = "none"
+            elif len(assignee_list) == 1:
+                # only support single assignee query
+                params["assignee"] = assignee_list[0]
+            else:
+                raise ValueError("Invalid `assignee` field in the param: TODO")
+        if issue_type_list is not None:
+            if len(issue_type_list) == 0:
+                # Pass empty list
+                params["type"] = "none"
+            elif len(issue_type_list) == 1:
+                params["type"] = issue_type_list[0]
+            else:
+                raise ValueError("Invalid `type` field in the param: TODO")
+        if label_list is not None and label_list != []:
+            params["labels"] = ",".join(label_list)
+        if creator is not None:
+            params["creator"] = creator
+        if mentioned is not None:
+            params["mentioned"] = mentioned
+        # The `direction` parameter only takes effect when `sort` is explicitly specified.
+        # Default behavior is sorted by `created` `desc`
+        if sort is not None:
+            params["sort"] = sort
+            if direction is not None:
+                params["direction"] = direction
+        elif direction is not None:
+            print("⚠️ Ignoring direction since sort is not specified.")
+        if since is not None:
+            params["since"] = since
         resp = self._get_request(url, params=params)
         data = resp.json()
         self._save_json_output(
             data,
+            # TODO make output filename configurable
             "repo_issues.json",
             post_msg=f"Fetched {len(data)} issues (state={state})",
         )
@@ -313,7 +363,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         label_list: list[Any] | None = None,
         assignee_list: list[str] | None = None,
         # The name of the issue type to associate with this issue or use null to remove the current issue type
-        issue_type: list[str] | None = None,
+        issue_type_list: list[str] | None = None,
     ):
         """
         Update an issue.
@@ -350,13 +400,13 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             payload["labels"] = label_list
         if assignee_list is not None:
             payload["assignees"] = assignee_list
-        if issue_type is not None:
+        if issue_type_list is not None:
             # Like milestone, use a wrapper list to translate the meaning of setting JSON `null`
-            if len(issue_type) == 0:
+            if len(issue_type_list) == 0:
                 # []
                 payload["type"] = None
-            elif len(issue_type) == 1:
-                payload["type"] = issue_type[0]
+            elif len(issue_type_list) == 1:
+                payload["type"] = issue_type_list[0]
             else:
                 raise ValueError(
                     "Invalid `type` field in the payload: expected an empty list [] to remove issue type or a single-element list [t] to set the issue type."
@@ -401,6 +451,218 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             f"[GitHubRESTCrawler] Try unlock Issue #{issue_number}. HTTP response status {resp.status_code}"
         )
         return resp.status_code
+
+    # 📦 Pull requets
+    # Pull requests are a type of issue. The common actions should be performed through the issues API endpoints
+    # Link relations:
+    # `self``: The API location of this pull request
+    # `html`: The HTML location of this pull request
+    # `issue`: The API location of this pull request's issue
+    # `comments`: The API location of this pull request's issue comments
+    # `review_comments`: The API location of this pull request's review comments
+    # `review_comment`: The URL template to construct the API location for a review comment in this pull request's repository
+    # `commits`: The API location of this pull request's commits
+    # `statuses`: The API location of this pull request's commit statuses, which are the statuses of its head branch
+    def list_repo_pulls(
+        self,
+        state: str = "open",
+        head: str | None = None,
+        base: str | None = None,
+        sort: str | None = None,
+        direction: str | None = None,
+        per_page: int = 30,
+        page: int = 1,
+    ) -> list[dict[str, Any]]:
+        """
+        List pull requests in the repository.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#list-pull-requests
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls"
+        params: dict[str, Any] = {"state": state, "per_page": per_page, "page": page}
+        if head is not None:
+            params["head"] = head
+        if base is not None:
+            params["base"] = base
+        # The `direction` parameter only takes effect when `sort` is explicitly specified.
+        # Default behavior is sorted by `created` `desc`
+        if sort is not None:
+            params["sort"] = sort
+            if direction is not None:
+                params["direction"] = direction
+        elif direction is not None:
+            print("⚠️ Ignoring direction since sort is not specified.")
+        resp = self._get_request(url, params=params)
+        data = resp.json()
+        self._save_json_output(
+            data,
+            # TODO make output filename configurable
+            "repo_pulls.json",
+            post_msg=f"Fetched {len(data)} pulls (state={state})",
+        )
+        return data
+
+    def get_pull(self, pull_number: int):
+        """
+        Get a single pull request by number.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#get-a-pull-request
+        :param pull_number: Pull request number (i.e., issue number of PR)
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}"
+        resp = self._get_request(url)
+        pr = resp.json()
+        self._save_json_output(
+            pr,
+            f"pull_{pull_number}.json",
+            post_msg=f"Fetched pull request #{pull_number}.",
+        )
+        return pr
+
+    def create_pull(
+        self,
+        title: str,  # required unless `issue` is specified
+        head: str,
+        head_repo,  # required for cross-repository prs
+        base: str,
+        body: str | None = None,
+        draft: bool | None = None,
+        issue_number: int | None = None,  # required unless `title` is specified
+        maintainer_can_modify: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a pull request in the repository.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#create-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls"
+        payload: dict[str, Any] = {"title": title, "head": head, "base": base}
+        if body is not None:
+            payload["body"] = body
+        if maintainer_can_modify is not None:
+            payload["maintainer_can_modify"] = maintainer_can_modify
+        if draft is not None:
+            payload["draft"] = draft
+        # TODO Verify if `title` and `body` are respected when `issue` is provided.
+        if issue_number is not None:
+            payload["issue"] = issue_number
+        resp = self._post_request(url, payload=payload)
+        resp.raise_for_status()
+        new_pr = resp.json()
+        # Check use `id` or `number`
+        new_pull_id = new_pr.get("id", "unknown")
+        self._save_json_output(
+            new_pr,
+            f"pull_{new_pull_id}_created.json",
+            post_msg=f"New pull request #{new_pull_id} created.",
+        )
+        return new_pr
+
+    def update_pull(
+        self,
+        pull_number: int,
+        title: str | None = None,
+        body: str | None = None,
+        state: str | None = None,
+        base: str | None = None,
+        maintainer_can_modify: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#update-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}"
+        payload: dict[str, Any] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        # Can be `open`, `closed`
+        if state is not None:
+            payload["state"] = state
+        if base is not None:
+            payload["base"] = base
+        if maintainer_can_modify is not None:
+            payload["maintainer_can_modify"] = maintainer_can_modify
+        resp = self._patch_request(url, payload=payload)
+        pr = resp.json()
+        self._save_json_output(
+            pr,
+            f"pull_{pull_number}_updated.json",
+            post_msg=f"Pull request #{pull_number} updated.",
+        )
+        return pr
+
+    def list_pull_commits(
+        self, pull_number: int, per_page: int = 30, page: int = 1
+    ) -> list[dict[str, Any]]:
+        """
+        List commits on a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#list-commits-on-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/commits"
+        params: dict[str, Any] = {"per_page": per_page, "page": page}
+        resp = self._get_request(url, params=params)
+        pr_commits = resp.json()
+        self._save_json_output(
+            pr_commits,
+            f"pull_{pull_number}_commits_page_{page}.json",
+            post_msg=f"Fetched {len(pr_commits)} commits for pull #{pull_number}.",
+        )
+        return pr_commits
+
+    def list_pull_files(
+        self, pull_number: int, per_page: int = 30, page: int = 1
+    ) -> list[dict[str, Any]]:
+        """
+        List files changed in a specified pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#list-pull-requests-files
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/files"
+        params: dict[str, Any] = {"per_page": per_page, "page": page}
+        resp = self._get_request(url, params=params)
+        pr_files = resp.json()
+        self._save_json_output(
+            pr_files,
+            f"pull_{pull_number}_files_page_{page}.json",
+            post_msg=f"Fetched {len(pr_files)} files for pull #{pull_number}.",
+        )
+        return pr_files
+
+    def is_pull_merged(self, pull_number: int) -> bool:
+        """
+        Check if a pull request has been merged.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#check-if-a-pull-request-has-been-merged
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/merge"
+        resp = self._get_request(url)
+        # If status code 204 => merged, 404 => not merged
+        merge_status = resp.status_code == 204
+        print(
+            f"[GitHubRESTCrawler] Pull request #{pull_number} merged status: {merge_status}."
+        )
+        return merge_status
+
+    # TODO implement merge_pull and update_pull_branch
+    # def merge_pull(
+    #     self,
+    #     pull_number: int,
+    #     commit_title: str | None = None,
+    #     commit_message: str | None = None,
+    #     sha: str | None = None,
+    #     merge_method: str | None = None
+    # ):
+    #     pass
+    # def update_pull_branch(
+    #     self,
+    #     pull_number: int,
+    #     expected_head_sha: str | None = None,
+    # ):
+    #     pass
 
     # 📘 Markdown
     def render_markdown(
