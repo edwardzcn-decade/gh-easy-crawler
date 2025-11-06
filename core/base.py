@@ -8,6 +8,7 @@ Base classes and utilities for GitHub Crawler implementations (REST or GitHub CL
 import json
 import sys
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from .config import (
     APP_NAME,
@@ -26,7 +27,11 @@ class GitHubCrawlerBase(ABC):
     """Base class for GitHub Crawlers"""
 
     def __init__(
-        self, owner: str | None, repo: str | None = None, token: str | None = None
+        self,
+        owner: str | None,
+        repo: str | None = None,
+        token: str | None = None,
+        output_dir: str | None = None,
     ):
         """
         Initialize the GitHubCrawlerBase.
@@ -59,8 +64,10 @@ class GitHubCrawlerBase(ABC):
         self.token = token
 
         # Set up output directory
-        # TODO: Make configurable
-        self.output_dir = OUTPUT_DIR_DEFAULT
+        if output_dir is not None:
+            self.output_dir = Path(output_dir)
+        else:
+            self.output_dir = Path(OUTPUT_DIR_DEFAULT)
         self.output_dir.mkdir(exist_ok=True)
 
     def _get_user_agent_fake(self) -> str:
