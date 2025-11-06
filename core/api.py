@@ -550,11 +550,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         resp.raise_for_status()
         new_pr = resp.json()
         # Check use `id` or `number`
-        new_pull_id = new_pr.get("id", "unknown")
+        new_pull_number = new_pr.get("number", "unknown")
         self._save_json_output(
             new_pr,
-            f"pull_{new_pull_id}_created.json",
-            post_msg=f"New pull request #{new_pull_id} created.",
+            f"pull_{new_pull_number}_created.json",
+            post_msg=f"New pull request #{new_pull_number} created.",
         )
         return new_pr
 
