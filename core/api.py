@@ -268,6 +268,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         since: str | None = None,
         per_page: int = 30,
         page: int = 1,
+        output_filename: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         List issues in the repository.
@@ -325,10 +326,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             params["since"] = since
         resp = self._get_request(url, params=params)
         data = resp.json()
+        # Allow callers to override the output name while retaining a descriptive default.
+        filename = output_filename or f"repo_issues_page_{page}_per_{per_page}.json"
         self._save_json_output(
             data,
-            # TODO make output filename configurable
-            "repo_issues.json",
+            filename,
             post_msg=f"Fetched {len(data)} issues (state={state})",
         )
         return data
@@ -472,6 +474,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         direction: str | None = None,
         per_page: int = 30,
         page: int = 1,
+        output_filename: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         List pull requests in the repository.
@@ -494,10 +497,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             print("⚠️ Ignoring direction since sort is not specified.")
         resp = self._get_request(url, params=params)
         data = resp.json()
+        # Mirror issue-list output behavior so consumers can control where results land.
+        filename = output_filename or f"repo_pulls_page_{page}_per_{per_page}.json"
         self._save_json_output(
             data,
-            # TODO make output filename configurable
-            "repo_pulls.json",
+            filename,
             post_msg=f"Fetched {len(data)} pulls (state={state})",
         )
         return data

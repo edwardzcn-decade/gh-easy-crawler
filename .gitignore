@@ -5,8 +5,8 @@ env/
 bin/
 lib/
 include/
-/output
-/test_output
+output/
+*_output/
 /tests/__pycache__
 /core/__pycache__
 .python-version
