@@ -35,7 +35,7 @@ def _cleanup_output_artifacts():
     patterns = [
         "issue_comment_*",
         "issue_*_comments_page_*",
-        "repo_issue_comments_*",
+        "repo_issues.json" "repo_issue_comments_*",
     ]
     for pattern in patterns:
         for path in output_path.glob(pattern):
@@ -52,14 +52,12 @@ def _cleanup_output_artifacts():
 def crawler() -> GitHubRESTCrawler:
     token = get_github_token_test()
     if not token:
-        pytest.skip(
-            "GITHUB_TOKEN environment variable is required to run GitHub API tests."
-        )
+        pytest.skip("GITHUB_TOKEN is required to run GitHub API tests.")
     return GitHubRESTCrawler(
         GITHUB_REPO_OWNER_TEST,
         GITHUB_REPO_NAME_TEST,
         token,
-        OUTPUT_DIR_TEST
+        OUTPUT_DIR_TEST,
     )
 
 
@@ -70,6 +68,7 @@ def prepare_environment():
     _cleanup_output_artifacts()
     yield
     print("✅ Finished module tests, environment teardown complete.")
+
 
 # -------------------------------------------------------------
 # Cleanup test
@@ -94,6 +93,7 @@ def test_cleanup_old_test_comments(crawler: GitHubRESTCrawler):
     # and at least one test comment is deleted. For the first run, relax to >= 0.
     assert scanned_count < 100 and deleted_count >= 1
 
+
 # -------------------------------------------------------------
 # GET comment list tests
 # -------------------------------------------------------------
@@ -109,6 +109,7 @@ def test_list_comments(crawler: GitHubRESTCrawler):
         TEST_ISSUE_NUMBER, per_page=100, page=1
     )
     assert isinstance(issue_comments_initial, list)
+
 
 # -------------------------------------------------------------
 # Individual CURD tests
