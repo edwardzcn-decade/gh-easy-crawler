@@ -18,9 +18,13 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     """GitHub REST API implementation of GitHubCrawlerBase"""
 
     def __init__(
-        self, owner: str | None, repo: str | None = None, token: str | None = None
+        self,
+        owner: str | None,
+        repo: str | None = None,
+        token: str | None = None,
+        output_dir: str | None = None,
     ):
-        super().__init__(owner, repo, token)
+        super().__init__(owner, repo, token, output_dir)
         # Build default headers
         # TODO: Make media type configurable rather than default
         self.headers = {
@@ -157,6 +161,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     # --------------------------------------------------------
     # REST API Endpoints
     # --------------------------------------------------------
+    # 🧑‍💻 User
     def get_authenticated_user(self) -> dict[str, Any]:
         """
         Get the currently authenticated user's information.
@@ -198,6 +203,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return user
 
+    # 🏠 Repository
     def get_repo_info(self) -> dict[str, Any]:
         """
         Get metadata of a specific repository.
@@ -214,6 +220,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return repo_info
 
+    # 📦 Issue
     def list_user_issues(
         self,
         filter: str = "assigned",
@@ -395,6 +402,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return resp.status_code
 
+    # 📘 Markdown
     def render_markdown(
         self,
         text: str,
@@ -420,16 +428,10 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         resp = self._post_request(url, payload=payload)
         rendered = resp.text
 
-        def _sanitize_fragment(value: str) -> str:
-            return (
-                "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in value)
-                or "rendered"
-            )
-
         if output_filename is None:
-            filename = f"markdown_rendered_{_sanitize_fragment(mode)}.html"
+            filename = f"markdown_rendered_{mode}.html"
         else:
-            filename = _sanitize_fragment(output_filename)
+            filename = output_filename
         output_path = self.output_dir / filename
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(rendered)
@@ -449,7 +451,10 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = "/markdown/raw"
         # using `text/plain` ir `text/x-markdown`
-        headers: dict[str, str] = {"Content-Type": "text/plain", "Accept": "text/html"}
+        headers: dict[str, str] = {
+            "Content-Type": SupportMediaTypes.TEXT_PLAIN.value,
+            "Accept": SupportMediaTypes.TEXT_HTML.value,
+        }
         resp = self._post_request(url, headers=headers, data=text.encode("utf-8"))
         rendered = resp.text
         if output_filename is None:
@@ -462,6 +467,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         print(f"[GitHubRESTCrawler] Raw markdown rendered -> {output_path}")
         return rendered
 
+    # 💬 Comments
     def list_repo_issue_comments(
         self,
         sort: str | None = None,
@@ -524,16 +530,16 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         return comments
 
     def create_single_issue_comment(
-        self,
-        issue_number: int,
-        body: str
+        self, issue_number: int, body: str
     ) -> dict[str, Any]:
         """
         Create an issue comment
         GitHub Docs
         https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#create-an-issue-comment
         """
-        url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/comments"
+        url = (
+            f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/comments"
+        )
         payload: dict[str, Any] = {"body": body}
         resp = self._post_request(url, payload=payload)
         resp.raise_for_status()
@@ -560,7 +566,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         comment = resp.json()
         self._save_json_output(
             comment,
-            f"issue_comment_{comment_id}.json",
+            f"issue_comment_{comment_id}_readed.json",
             post_msg=f"Issue comment #{comment_id} fetched.",
         )
         return comment
@@ -598,3 +604,70 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return resp.status_code
 
+    # ⚙️ Meta
+    def get_zen(self) -> str:
+        """
+        Get the Zen of GitHub.
+        GitHub Docs:
+        https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-the-zen-of-github
+        """
+        url = "/zen"
+        resp = self._get_request(url)
+        zen_text = resp.text.strip()
+        print(f"[GitHubRESTCrawler] ⚙️ Zen: {zen_text}")
+        return zen_text
+
+    def get_octocat(self, speech_str: str | None = None) -> str:
+        """
+        Get the Octocat of GitHub
+        GitHub Docs:
+        https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-octocat
+        """
+        url = "/octocat"
+        params: dict[str, Any] = {}
+        if speech_str is not None:
+            params["s"] = speech_str
+        resp = self._get_request(url, params=params)
+        octocat = resp.text
+        print(f"[GitHubRESTCrawler] 🐙 Octocat fetched\n{octocat}")
+        return octocat
+
+    def get_api_root(self) -> dict[str, Any]:
+        """
+        Get GitHub API root hypermedia links to top-level API resources.
+        GitHub Docs:
+        https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-apiname-meta-information
+        """
+        url = "/"
+        resp = self._get_request(url)
+        api_root = resp.json()
+        print(
+            f"[GitHubRESTCrawler] ⚙️ Fetched GitHub API root with {len(api_root)} keys."
+        )
+        return api_root
+
+    def get_github_meta(self) -> dict[str, Any]:
+        """
+        Get meta information about GitHub
+        GitHub Docs:
+        https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-github-meta-information
+        """
+        url = "/meta"
+        resp = self._get_request(url)
+        meta_info = resp.json()
+        print(
+            f"[GitHubRESTCrawler] ⚙️ Fetched GitHub API metadata with {len(meta_info)} keys."
+        )
+        return meta_info
+
+    def get_api_versions(self) -> list[str]:
+        """
+        Get all supported GitHub API versions
+        """
+        url = "/versions"
+        resp = self._get_request(url)
+        versions = resp.json()
+        print(
+            f"[GitHubRESTCrawler] ⚙️ List all supported GitHub API versions\n{versions}"
+        )
+        return versions

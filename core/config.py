@@ -39,8 +39,9 @@ GITHUB_TOKEN_TEST = None
 
 # Output directory
 # TODO: Make configurable and add sqlite support
-OUTPUT_DIR_DEFAULT = Path("output")
-OUTPUT_DIR_TEST = Path("test_output")
+OUTPUT_DIR_DEFAULT = "output"
+OUTPUT_DIR_TEST = "test_output"
+
 
 # Supported Media Types for GitHub API
 class SupportMediaTypes(StrEnum):
@@ -52,6 +53,8 @@ class SupportMediaTypes(StrEnum):
     HTML = "application/vnd.github.html"
     # return all
     FULL = "application/vnd.github.full+json"
+    TEXT_PLAIN = "text/plain"
+    TEXT_HTML = "text/html"
 
     # def _get_default_media_type_str(self) -> str:
     #     return SupportMediaTypes.DEFAULT.value
@@ -61,6 +64,7 @@ class SupportMediaTypes(StrEnum):
 def get_github_token_default() -> str | None:
     """Get GitHub token from environment variables."""
     return GITHUB_TOKEN_DEFAULT
+
 
 def get_github_token_test() -> str | None:
     """Get GitHub token used for UTs"""
@@ -72,3 +76,10 @@ def get_github_token_test() -> str | None:
 
 def unwrap_or(x, default):
     return x if x is not None else default
+
+
+def sanitize_fragment(value: str) -> str:
+    return (
+        "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in value)
+        or "rendered"
+    )
