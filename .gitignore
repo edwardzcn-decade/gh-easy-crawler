@@ -6,7 +6,7 @@ bin/
 lib/
 include/
 /output
-/test_ouput
+/test_output
 /tests/__pycache__
 /core/__pycache__
 .python-version

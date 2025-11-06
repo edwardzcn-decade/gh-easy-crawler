@@ -8,8 +8,9 @@ and share state through pytest fixtures.
 
 import os
 import time
-from uuid import uuid4
 import pytest
+from pathlib import Path
+from uuid import uuid4
 
 from core.api import GitHubRESTCrawler
 from core.config import (
@@ -29,14 +30,15 @@ TEST_ISSUE_NUMBER = int(os.getenv("GITHUB_TEST_ISSUE_NUMBER", "1"))
 # -------------------------------------------------------------
 def _cleanup_output_artifacts():
     """Remove stale JSON files related to issue comment tests."""
-    OUTPUT_DIR_TEST.mkdir(parents=True, exist_ok=True)
+    output_path = Path(OUTPUT_DIR_TEST)
+    output_path.mkdir(parents=True, exist_ok=True)
     patterns = [
         "issue_comment_*",
         "issue_*_comments_page_*",
         "repo_issue_comments_*",
     ]
     for pattern in patterns:
-        for path in OUTPUT_DIR_TEST.glob(pattern):
+        for path in output_path.glob(pattern):
             try:
                 path.unlink()
             except FileNotFoundError:
@@ -57,6 +59,7 @@ def crawler() -> GitHubRESTCrawler:
         GITHUB_REPO_OWNER_TEST,
         GITHUB_REPO_NAME_TEST,
         token,
+        OUTPUT_DIR_TEST
     )
 
 
