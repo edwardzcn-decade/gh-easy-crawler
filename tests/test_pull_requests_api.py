@@ -81,11 +81,12 @@ def sample_pull(crawler: GitHubRESTCrawler) -> dict:
 
 
 def test_list_repo_pulls_creates_output(crawler: GitHubRESTCrawler):
-    output_path = Path(OUTPUT_DIR_TEST) / "repo_pulls.json"
+    test_filename = "repo_pulls.json"
+    output_path = Path(OUTPUT_DIR_TEST) / test_filename
     if output_path.exists():
         output_path.unlink()
 
-    pulls = crawler.list_repo_pulls(state="all", per_page=30, page=1)
+    pulls = crawler.list_repo_pulls(state="all", per_page=30, page=1,output_filename=test_filename)
 
     assert isinstance(pulls, list)
     assert output_path.exists()
@@ -93,6 +94,7 @@ def test_list_repo_pulls_creates_output(crawler: GitHubRESTCrawler):
 
 def test_get_pull_matches_listing(crawler: GitHubRESTCrawler, sample_pull: dict):
     pull_number = sample_pull["number"]
+    print(pull_number)
     output_path = Path(OUTPUT_DIR_TEST) / f"pull_{pull_number}.json"
     if output_path.exists():
         output_path.unlink()

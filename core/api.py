@@ -149,9 +149,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             resp.raise_for_status()
         except Exception as e:
             print(
-                f"[GitHubRESTCrawler] ❌ Error during {method.upper()} request → {url}"
+                f"❌ Error during {method.upper()} request → {url}"
             )
-            print(f"[GitHubRESTCrawler] Reason: {e}")
+            print(f"Reason: {e}")
             if resp is not None:
                 print(f"Response Status Code: {resp.status_code}")
                 print(f"Response Content: {resp.text[:200]}")
@@ -513,13 +513,14 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}"
         resp = self._get_request(url)
-        pr = resp.json()
+        data = resp.json()
         self._persist(
-            pr,
-            f"pull_{pull_number}.json",
+            data,
+            filename=f"pull_{pull_number}.json",
+            level="log",
             post_msg=f"Fetched pull request #{pull_number}.",
         )
-        return pr
+        return data
 
     def create_pull(
         self,
@@ -646,18 +647,16 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/merge"
         resp = self._get_request(url)
-        data = resp.json()
         # If status code 204 => merged, 404 => not merged
         merge_status = resp.status_code == 204
-        # TODO save merge_status
         self._persist(
-            data,
+            merge_status,
             filename=f"merge_status.json",
             level="log",
             post_msg=f"Pull request #{pull_number} merged status: {merge_status}.",
         )
 
-        return data
+        return merge_status
 
     # TODO implement merge_pull and update_pull_branch
     # def merge_pull(
@@ -697,11 +696,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 payload["context"] = context
             elif mode == "markdown":
                 print(
-                    "[GitHubRESTCrawler] Try to render a markdown with `markdown` mode. `context` setting does not work."
+                    "Try to render a markdown with `markdown` mode. `context` setting does not work."
                 )
         resp = self._post_request(url, payload=payload)
         rendered = resp.text
-
+        # Always persist
         if output_filename is None:
             filename = f"markdown_rendered_{mode}.html"
         else:
@@ -709,7 +708,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         output_path = self.output_dir / filename
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(rendered)
-        print(f"[GitHubRESTCrawler] Rendered markdown saved -> {output_path}")
+        print(f"Rendered markdown saved -> {output_path}")
         return rendered
 
     def render_markdown_raw(
@@ -731,6 +730,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         }
         resp = self._post_request(url, headers=headers, data=text.encode("utf-8"))
         rendered = resp.text
+        # Always persist
         if output_filename is None:
             filename = "markdown_rendered_raw.html"
         else:
@@ -738,7 +738,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         output_path = self.output_dir / filename
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(rendered)
-        print(f"[GitHubRESTCrawler] Raw markdown rendered -> {output_path}")
+        print(f"Rendered markdown raw saved -> {output_path}")
         return rendered
 
     # 💬 Comments
@@ -897,8 +897,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         url = "/zen"
         resp = self._get_request(url)
         zen_text = resp.text.strip()
-        # TODO add persist
-        print(f"[GitHubRESTCrawler] ⚙️ Zen: {zen_text}")
+        self._persist(
+            {"zen": zen_text},
+            filename="github_zen.json",
+            level="log",
+            post_msg=f"Fetched GitHub Zen text:\n\"{zen_text}\"",
+        )
         return zen_text
 
     def get_octocat(self, speech_str: str | None = None) -> str:
@@ -913,8 +917,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             params["s"] = speech_str
         resp = self._get_request(url, params=params)
         octocat = resp.text
-        # TODO add persist
-        print(f"[GitHubRESTCrawler] 🐙 Octocat fetched\n{octocat}")
+        self._persist(
+            {"speech": speech_str, "octocat": octocat},
+            filename="github_octocat.json",
+            level="log",
+            post_msg=f"🐙 Octocat fetched\n{octocat}",
+        )
         return octocat
 
     def get_api_root(self) -> dict[str, Any]:
@@ -925,12 +933,14 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = "/"
         resp = self._get_request(url)
-        api_root = resp.json()
-        # TODO add persist
-        print(
-            f"[GitHubRESTCrawler] ⚙️ Fetched GitHub API root with {len(api_root)} keys."
+        data = resp.json()
+        self._persist(
+            data,
+            filename="github_api_root.json",
+            level="log",
+            post_msg=f"Fetched GitHub API root with {len(data)} keys.",
         )
-        return api_root
+        return data
 
     def get_github_meta(self) -> dict[str, Any]:
         """
@@ -940,12 +950,14 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = "/meta"
         resp = self._get_request(url)
-        meta_info = resp.json()
-        # TODO add persist
-        print(
-            f"[GitHubRESTCrawler] ⚙️ Fetched GitHub API metadata with {len(meta_info)} keys."
+        data = resp.json()
+        self._persist(
+            data,
+            filename="github_meta.json",
+            level="log",
+            post_msg=f"Fetched GitHub API metadata with {len(data)} keys.",
         )
-        return meta_info
+        return data
 
     def get_api_versions(self) -> list[str]:
         """
@@ -953,12 +965,14 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = "/versions"
         resp = self._get_request(url)
-        versions = resp.json()
-        # TODO add persist
-        print(
-            f"[GitHubRESTCrawler] ⚙️ List all supported GitHub API versions\n{versions}"
+        data = resp.json()
+        self._persist(
+            data,
+            filename="github_api_versions.json",
+            level="log",
+            post_msg=f"List all supported GitHub API versions:\n {data}",
         )
-        return versions
+        return data
 
     # 🧑‍💻 User
     def get_authenticated_user(self) -> dict[str, Any]:
