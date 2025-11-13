@@ -35,7 +35,8 @@ def _cleanup_output_artifacts():
     patterns = [
         "issue_comment_*",
         "issue_*_comments_page_*",
-        "repo_issues.json" "repo_issue_comments_*",
+        "repo_issues.json",
+        "repo_issue_comments_*",
     ]
     for pattern in patterns:
         for path in output_path.glob(pattern):

@@ -71,7 +71,13 @@ class GitHubCrawlerBase(ABC):
         self.output_dir.mkdir(exist_ok=True)
 
     def _get_user_agent_fake(self) -> str:
-        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+        """Return a realistic fake browser user agent string for debugging."""
+
+        return (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/141.0.0.0 Safari/537.36"
+        )
 
     def _get_user_agent_default(self) -> str:
         return f"{APP_NAME}/{APP_VERSION} ({self.user_name})"
