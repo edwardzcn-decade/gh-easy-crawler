@@ -161,6 +161,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     # REST API Endpoints
     # --------------------------------------------------------
     # Actions
+    ## Artifacts
     def list_repo_artifacts(
         self, per_page: int = 30, page: int = 1, name: str | None = None
     ) -> dict[str, Any]:
@@ -296,6 +297,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return data
 
+    ## Cache
     def get_org_actions_cache_usage(self, org: str | None = None) -> dict[str, Any]:
         """
         Get cache usage for an organization.
@@ -444,7 +446,22 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return success
 
-    # 🏠 Repository
+    ## TODO Github-hosted runners
+    ## Link: https://docs.github.com/en/rest/actions/hosted-runners
+
+    ## TODO OIDC
+    ## Link: https://docs.github.com/en/rest/actions/oidc
+
+    ## TODO Permissions
+    ## Link: https://docs.github.com/en/rest/actions/permissions
+
+    ## TODO Secrets
+    ## Link: https://docs.github.com/en/rest/actions/secrets
+
+    ## TODO Self-hosted runner groups
+    ## Link: https://docs.github.com/en/rest/actions/self-hosted-runner-groups
+
+    # Repository
     def get_repo_info(self) -> dict[str, Any]:
         """
         Get metadata of a specific repository.
@@ -463,7 +480,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return data
 
-    # 📦 Issues
+    # Issues
     def list_user_issues(
         self,
         filter: str = "assigned",
@@ -670,28 +687,41 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return data
 
-    def lock_issue(self, issue_number: int, lock_reason: str):
+    def lock_issue(self, issue_number: int, lock_reason: str) -> bool:
         """
         Lock an issue.
         GitHub Docs:
         https://docs.github.com/zh/rest/issues/issues?apiVersion=2022-11-28#lock-an-issue
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/lock"
-        # TODO check legal string of lock_reason
+        match lock_reason:
+            case "off-topic":
+                print(f"⚠️ Lock the issue according to {lock_reason}")
+            case "too heated":
+                print(f"⚠️ Lock the issue according to {lock_reason}")
+            case "resolved":
+                print(f"⚠️ Lock the issue according to {lock_reason}")
+            case "spam":
+                print(f"⚠️ Lock the issue according to {lock_reason}")
+            case _:
+                raise ValueError(
+                    "⚠️ The lock reason should be one of these: 'off-topic', 'too heated', 'resolved', 'spam' "
+                )
         # It must be one of these reasons: `off-topic`, `too heated`, `resolved`, `spam`
         payload: dict[str, Any] = {"lock_reason": lock_reason}
+        # status code 204 => locked, 403 => forbidden, 404 => resource not found, 410 => gone
         resp = self._put_request(url, payload=payload)
-        data = resp.json()
+        lock_result = resp.status_code == 204
         self._persist(
-            data,
+            lock_result,
             filename=f"lock_issue_{issue_number}.json",
             level="log",
             # Print status code
-            post_msg=f"Try lock Issue #{issue_number} (reason={lock_reason}). HTTP response status {resp.status_code}",
+            post_msg=f"Try lock Issue #{issue_number} (reason={lock_reason}). HTTP response status {lock_result}",
         )
-        return data
+        return lock_result
 
-    def unlock_issue(self, issue_number: int):
+    def unlock_issue(self, issue_number: int) -> bool:
         """
         Unlock an issue.
         GitHub Docs:
@@ -699,16 +729,17 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/lock"
         resp = self._delete_request(url)
-        data = resp.json()
+        # status code 204 => locked, 403 => forbidden, 404 => Resource not found,
+        unlock_result = resp.status_code == 204
         self._persist(
-            data,
+            unlock_result,
             filename=f"unlock_issue_{issue_number}.json",
             level="log",
             post_msg=f"Try unlock Issue #{issue_number}. HTTP response status {resp.status_code}",
         )
-        return resp.status_code
+        return unlock_result
 
-    # 📦 Pull requets
+    # Pull requets
     # Pull requests are a type of issue. The common actions should be performed through the issues API endpoints
     # Link relations:
     # `self``: The API location of this pull request
@@ -905,15 +936,15 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/merge"
         resp = self._get_request(url)
         # If status code 204 => merged, 404 => not merged
-        merge_status = resp.status_code == 204
+        merge_result = resp.status_code == 204
         self._persist(
-            merge_status,
-            filename=f"merge_status.json",
+            merge_result,
+            filename=f"merge_result.json",
             level="log",
-            post_msg=f"Pull request #{pull_number} merged status: {merge_status}.",
+            post_msg=f"Pull request #{pull_number} merged status: {merge_result}.",
         )
 
-        return merge_status
+        return merge_result
 
     # TODO implement merge_pull and update_pull_branch
     # def merge_pull(
@@ -932,7 +963,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     # ):
     #     pass
 
-    # 📘 Markdown
+    # Markdown
     def render_markdown(
         self,
         text: str,
@@ -942,7 +973,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     ):
         """
         Render a markdown document
-        GitHub Docs
+        GitHub Docs:
         https://docs.github.com/zh/rest/markdown/markdown?apiVersion=2022-11-28#render-a-markdown-document
         """
         url = "/markdown"
@@ -975,7 +1006,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     ):
         """
         Render a markdown document in raw media
-        GitHub Docs
+        GitHub Docs:
         https://docs.github.com/en/rest/markdown/markdown?apiVersion=2022-11-28#render-a-markdown-document-in-raw-mode
         TODO official doc is not good
         """
@@ -1009,7 +1040,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     ) -> list[dict[str, Any]]:
         """
         List issue comments for a repository
-        GitHub Docs
+        GitHub Docs:
         https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#list-issue-comments-for-a-repository
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments"
@@ -1043,7 +1074,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     ) -> list[dict[str, Any]]:
         """
         List issue comments with specific `issue_number` (Every pr is an issue, but not every issue is a pr)
-        GitHub Docs
+        GitHub Docs:
         https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#list-issue-comments
         """
         url = (
@@ -1067,7 +1098,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     ) -> dict[str, Any]:
         """
         Create an issue comment
-        GitHub Docs
+        GitHub Docs:
         https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#create-an-issue-comment
         """
         url = (
@@ -1092,7 +1123,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     ) -> dict[str, Any]:
         """
         Get an issue comment with specific `comment_id`
-        GitHub Docs
+        GitHub Docs:
         https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#get-an-issue-comment
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments/{comment_id}"
@@ -1109,7 +1140,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     def update_single_issue_comment(self, comment_id: int, body: str) -> dict[str, Any]:
         """
         Update an issue comment
-        GitHub Docs
+        GitHub Docs:
         https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#update-an-issue-comment
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments/{comment_id}"
@@ -1127,24 +1158,24 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     def delete_single_issue_comment(
         self,
         comment_id: int,
-    ):
+    ) -> bool:
         """
         Delete an issue comment
-        GitHub Docs
+        GitHub Docs:
         https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#delete-an-issue-comment
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments/{comment_id}"
         resp = self._delete_request(url)
-        data = resp.json()
+        delete_result = resp.status_code == 204
         self._persist(
-            data,
+            delete_result,
             filename=f"issue_comment_{comment_id}_deleted.json",
             level="log",
-            post_msg="Delete issue comment #{comment_id}. HTTP response status {resp.status_code}",
+            post_msg=f"Delete issue comment #{comment_id}. HTTP response status {resp.status_code}",
         )
-        return data
+        return delete_result
 
-    # ⚙️ Meta
+    # Meta
     def get_zen(self) -> str:
         """
         Get the Zen of GitHub.
@@ -1219,6 +1250,8 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     def get_api_versions(self) -> list[str]:
         """
         Get all supported GitHub API versions
+        GitHub Docs:
+        https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-all-api-versions
         """
         url = "/versions"
         resp = self._get_request(url)
@@ -1231,7 +1264,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return data
 
-    # 🧑‍💻 User
+    # User
     def get_authenticated_user(self) -> dict[str, Any]:
         """
         Get the currently authenticated user's information.
