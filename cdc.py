@@ -13,7 +13,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Set
 
 from core.api import GitHubRESTCrawler
 from core.config import GITHUB_TOKEN_DEFAULT
@@ -25,7 +25,10 @@ START_TIMESTAMP = datetime(2024, 3, 5, 0, 0, 0, tzinfo=timezone.utc)
 TITLE_PATTERN = re.compile(r"\[[A-Z]+-\d+\]")
 API_CALL_DELAY = 0.3  # seconds
 METRIC_HEADERS = [
-    "Bug编号",
+    "bug_id",
+    "tool_created_at",
+    "tool_updated_at",
+    "tool_closed_at",
     "tool_merged_at",
     "tool_merge_commit_hash",
     "tool_labels",
@@ -35,10 +38,10 @@ METRIC_HEADERS = [
     "tool_total_words",
     "tool_total_bytes",
 ]
-METRIC_OUTPUT_PATH = "bugs-tool-generate.csv"
+METRIC_OUTPUT_PATH = "cdc_output/csv/"
 
 
-def read_select_bug_ids(filepath: str = "select_bugs.txt") -> list[str]:
+def read_select_bug_ids(filepath: str) -> list[str]:
     bug_ids = []
     with open(filepath, "r", encoding="utf-8") as f:
         for line in f:
@@ -52,7 +55,7 @@ def extract_bug_id_from_title(title: str) -> str | None:
     match = TITLE_PATTERN.search(title or "")
     if match is None:
         return None
-    return match.group(0).strip("[]")
+    return match.group(0).strip("[ ]")
 
 
 def get_all_pulls(crawler: GitHubRESTCrawler) -> list[dict]:
@@ -112,10 +115,9 @@ def filter_pulls(raw_pulls: list[dict]) -> list[dict]:
         if match is None:
             return False
         bug_id = match.group(0)
-        # with '[' ']'
-        return bug_id.strip('[').strip(']') in bug_ids
+        return bug_id.strip("[ ]") in bug_ids
 
-    bug_ids = read_select_bug_ids()
+    bug_ids = read_select_bug_ids(filepath="cdc_output/select_bugs.txt")
     filtered = [
         pr
         for pr in raw_pulls
@@ -124,6 +126,10 @@ def filter_pulls(raw_pulls: list[dict]) -> list[dict]:
     print(
         f"✅ Filtered out {len(raw_pulls) - len(filtered)} pull requests (kept {len(filtered)})"
     )
+    # tmp_list  = [a["title"] for a in filtered]
+    # tmp_list.sort(key=lambda x: x[:13])
+    # print ("\n".join(tmp_list))
+
     return filtered
 
 
@@ -173,6 +179,8 @@ def _load_existing_metrics(csv_path: Path) -> list[dict]:
             if header is None:
                 if any(cell.strip() for cell in raw_row):
                     header = raw_row
+                    if header != METRIC_HEADERS:
+                        raise ValueError("The readed header is not euql to METRIC_HEADERS. Check it")
                 continue
             if not raw_row or not any(cell.strip() for cell in raw_row):
                 continue
@@ -184,6 +192,38 @@ def _load_existing_metrics(csv_path: Path) -> list[dict]:
     return rows
 
 
+def _check_if_append(
+    mode: str, visited: Set[str], old_row: dict, new_row: dict, append_rows: list
+):
+    """Inline update or append"""
+    if mode == "update":
+        # update in line and not add in append_rows
+        old_row.update(new_row)
+    elif mode == "merge":
+        raise ValueError("'merge' mode is not supported yet")
+    elif mode == "append":
+        # append in append_rows and do not change the old row
+        id = new_row.get("bug_id")
+        if id is None:
+            raise ValueError("'bug_id' in new row is None")
+        if id not in visited:
+            # First visit
+            visited.add(id)
+            old_row.update(new_row)
+        else:
+            # Visited
+            append_rows.append(new_row)
+    else:
+        raise ValueError("Unsupported mode in _check_if_append")
+
+
+def write_rows_csv_file(final_path: Path, headers: list[str], rows: list):
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    with final_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        for row in rows:
+            writer.writerow([row.get(key, "") for key in headers])
 
 
 # TODO Need implementation of `list_review_comments`/`list_pull_comments`
@@ -255,62 +295,105 @@ def collect_files_changed(crawler: GitHubRESTCrawler, pull_number: int) -> list[
             page += 1
             time.sleep(API_CALL_DELAY)
 
-    return [f.get("filename", "N/A") for f in pr_files]
+    return list(filter(None, [f.get("filename") for f in pr_files]))
 
 
 def collect_labels(pr: dict) -> list[str]:
-    return [l.get("name", "N/A") for l in pr.get("labels", [])]
+    return list(filter(None, [l.get("name") for l in pr.get("labels", [])]))
 
 
-def summarize_pulls(crawler: GitHubRESTCrawler, pulls: list[dict], csv_path: str) -> None:
+def summarize_pulls(
+    crawler: GitHubRESTCrawler,
+    pulls: list[dict],
+    csv_path: str,
+    force_update: bool = False,
+) -> None:
+    # TODO solve the overwrite problem
     """Output key pull request metadata in a compact table."""
     if not pulls:
         print("No pull requests matched the filter criteria.")
         return
-    csv_location = Path(csv_path)
-    rows = _load_existing_metrics(csv_location)
-    rows_by_bug = {
-        existing.get("Bug编号", ""): existing
+    input_csv = Path(csv_path) / "input.csv"
+    rows = _load_existing_metrics(input_csv)
+    rows_by_bug_hashmap = {
+        existing.get("bug_id", ""): existing
         for existing in rows
-        if existing.get("Bug编号")
+        if existing.get("bug_id")
     }
+    rows_visited: Set[str] = set()
+    not_included_rows: list[dict] = []
+    append_rows: list[dict] = []
     for pr in pulls:
-        pull_number = pr.get("number", 0)
-        title = pr.get("title", "UNKNOWN")
-        sha = pr.get("merge_commit_sha", None)
-        merged_at = pr.get("merged_at", None)
-        labels = collect_labels(pr)
-        files_changed = collect_files_changed(crawler, pull_number)
+        pull_number: int | None = pr.get("number")
+        if pull_number is None:
+            raise ValueError(f"Missing 'number' field in pull request object.")
+        title: str | None = pr.get("title")
+        if title is None:
+            raise ValueError(f"Missing 'title' field in pull request object.")
+        bug_id: str | None = extract_bug_id_from_title(title)
+        if bug_id is None:
+            # Has title filed but not include FLINK-XXXX
+            print(f"⚠️ WARN: pull request with title: {title} should be filtered")
+            continue
+        hash: str | None = pr.get("merge_commit_sha")
+        created_at: str | None = pr.get("created_at")
+        updated_at: str | None = pr.get("updated_at")
+        closed_at: str | None = pr.get("closed_at")
+        merged_at: str | None = pr.get("merged_at")
+        labels: list[str] = collect_labels(pr)
+        # Call other APIs
+        files_changed: list[str] = collect_files_changed(crawler, pull_number)
         time.sleep(API_CALL_DELAY)
         comments_detail = collect_issue_comments(crawler, pull_number)
-        bug_id = extract_bug_id_from_title(title)
-        if bug_id:
-            metrics_row = {
-                "tool_merged_at": merged_at or "",
-                "tool_merge_commit_hash": sha or "",
-                "tool_labels": ";".join(labels) if labels else "",
-                "tool_files_changed": ";".join(files_changed) if files_changed else "",
-                "tool_count_comments": str(comments_detail.get("count_comments", 0)),
-                "tool_total_chars": str(comments_detail.get("total_chars", 0)),
-                "tool_total_words": str(comments_detail.get("total_words", 0)),
-                "tool_total_bytes": str(comments_detail.get("total_bytes", 0)),
-            }
-            row = rows_by_bug.get(bug_id)
-            if row is None:
-                row = {key: "" for key in METRIC_HEADERS}
-                row["Bug编号"] = bug_id
-                rows.append(row)
-                rows_by_bug[bug_id] = row
-            row.update(metrics_row)
-        print(
-            f"- {title}\n  merge_commit_sha: {sha}\n  merged_at: {merged_at}\n  labels: {labels}\n  files_changed: {files_changed}\n  comments_detail: {comments_detail}"
-        )
-    csv_location.parent.mkdir(parents=True, exist_ok=True)
-    with csv_location.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(METRIC_HEADERS)
-        for row in rows:
-            writer.writerow([row.get(key, "") for key in METRIC_HEADERS])
+        # TODO collect review comments and other relevant things
+
+        # Must Including FLINK-XXXX
+        new_row = {
+            "bug_id": bug_id,
+            "tool_created_at": created_at or "",
+            "tool_updated_at": updated_at or "",
+            "tool_closed_at": closed_at or "",
+            "tool_merged_at": merged_at or "",
+            "tool_merge_commit_hash": hash or "",
+            "tool_labels": ";".join(labels),
+            "tool_files_changed": ";".join(files_changed),
+            "tool_count_comments": str(comments_detail.get("count_comments", 0)),
+            "tool_total_chars": str(comments_detail.get("total_chars", 0)),
+            "tool_total_words": str(comments_detail.get("total_words", 0)),
+            "tool_total_bytes": str(comments_detail.get("total_bytes", 0)),
+        }
+        row = rows_by_bug_hashmap.get(bug_id)
+        if row is None:
+            # Not in manual bug list add to `not_included.csv`
+            not_included_rows.append(new_row)
+        else:
+            # In manual bug list
+            if force_update:
+                # force update local cache (final write)
+                row.clear()
+                row.update(new_row)
+            else:
+                _check_if_append(
+                    mode="append",
+                    visited=rows_visited,
+                    old_row=row,
+                    new_row=new_row,
+                    append_rows=append_rows,
+                )
+
+    write_rows_csv_file(
+        final_path=Path(csv_path) / "output.csv", headers=METRIC_HEADERS, rows=rows
+    )
+    write_rows_csv_file(
+        final_path=Path(csv_path) / "not_included.csv",
+        headers=METRIC_HEADERS,
+        rows=not_included_rows,
+    )
+    write_rows_csv_file(
+        final_path=Path(csv_path) / "append.csv",
+        headers=METRIC_HEADERS,
+        rows=append_rows,
+    )
 
 
 def main():
@@ -321,9 +404,11 @@ def main():
         output_dir=OUTPUT_DIR,
     )
     try:
-        pulls = ensure_pull_dataset(crawler)
-        filtered = filter_pulls(pulls)
-        summarize_pulls(crawler, filtered, csv_path=METRIC_OUTPUT_PATH)
+        raw_pulls = ensure_pull_dataset(crawler)
+        filtered = filter_pulls(raw_pulls)
+        summarize_pulls(
+            crawler, pulls=filtered, csv_path=METRIC_OUTPUT_PATH, force_update=False
+        )
     except Exception as e:
         print(f"Error occurred: {e}")
         sys.exit(1)
