@@ -85,9 +85,13 @@ def test_cleanup_old_test_comments(crawler: GitHubRESTCrawler):
     )
     for comment in existing_comments:
         scanned_count += 1
-        if comment.get("body", "").startswith(TEST_COMMENT_PREFIX):
-            crawler.delete_single_issue_comment(comment["id"])
-            deleted_count += 1
+        comment_body = comment.get("body", "UNKNOW BODY")
+        if comment_body.startswith(TEST_COMMENT_PREFIX):
+            if_delete = crawler.delete_single_issue_comment(comment["id"])
+            if if_delete:
+                deleted_count += 1
+            else:
+                print(f"⚠️ Fail to clean comment: {comment_body}")
             time.sleep(0.1)
     print(f"🧹 Deleted {deleted_count} stale test comments for cleanup.")
     # Assertion ensure all old test comments are fetched within one page (per_page=100)
@@ -140,8 +144,8 @@ def test_issue_comment_crud_flow(crawler: GitHubRESTCrawler):
     assert refetched_keep["body"] == updated_body
 
     # Delete the second comment and ensure it no longer appears in listings.
-    status_code = crawler.delete_single_issue_comment(delete_id)
-    assert status_code == 204
+    if_delete = crawler.delete_single_issue_comment(delete_id)
+    assert if_delete
 
     time.sleep(0.2)
 

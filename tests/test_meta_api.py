@@ -55,3 +55,4 @@ def test_get_api_versions_not_empty(crawler: GitHubRESTCrawler):
     versions = crawler.get_api_versions()
     assert isinstance(versions, list)
     assert versions != []
+    assert "2022-11-28" in versions

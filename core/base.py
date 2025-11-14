@@ -20,6 +20,7 @@ from .config import (
     GITHUB_API_VERSION,
     GITHUB_API_URL,
     OUTPUT_DIR_DEFAULT,
+    SAVE_MODE_DEFAULT,
 )
 
 
@@ -84,6 +85,24 @@ class GitHubCrawlerBase(ABC):
 
     def _get_api_version(self) -> str:
         return GITHUB_API_VERSION
+
+    def _persist(
+        self,
+        data,  # json data
+        filename: str,
+        level: str | None = None,  # TODO follow log level controlling
+        pre_msg: str | None = None,
+        post_msg: str | None = None,
+    ):
+        match SAVE_MODE_DEFAULT:
+            case "always":
+                self._save_json_output(data, filename, pre_msg, post_msg)
+            case "never":
+                pass
+            case "auto":
+                # TODO follow log level controlling
+                if level is not None:
+                    self._save_json_output(data, filename, pre_msg, post_msg)
 
     def _save_json_output(
         self,
