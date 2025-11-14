@@ -179,6 +179,8 @@ def _load_existing_metrics(csv_path: Path) -> list[dict]:
             if header is None:
                 if any(cell.strip() for cell in raw_row):
                     header = raw_row
+                    if header != METRIC_HEADERS:
+                        raise ValueError("The readed header is not euql to METRIC_HEADERS. Check it")
                 continue
             if not raw_row or not any(cell.strip() for cell in raw_row):
                 continue
