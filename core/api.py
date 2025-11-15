@@ -98,9 +98,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         url: str,
         headers: dict[str, str] | None = None,
         params: dict[str, Any] | None = None,
+        payload: Any | None = None,
         timeout: float | tuple[float, float] | None = None,
     ):
-        return self._request("DELETE", url, headers, params=params, timeout=timeout)
+        return self._request(
+            "DELETE", url, headers, params=params, json_payload=payload, timeout=timeout
+        )
 
     def _request(
         self,
@@ -742,14 +745,8 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/lock"
         match lock_reason:
-            case "off-topic":
-                print(f"⚠️ Lock the issue according to {lock_reason}")
-            case "too heated":
-                print(f"⚠️ Lock the issue according to {lock_reason}")
-            case "resolved":
-                print(f"⚠️ Lock the issue according to {lock_reason}")
-            case "spam":
-                print(f"⚠️ Lock the issue according to {lock_reason}")
+            case "off-topic" | "too heated" | "resolved" | "spam":
+                print(f"⚠️ Try lock issue #{issue_number} by {lock_reason}")
             case _:
                 raise ValueError(
                     "⚠️ The lock reason should be one of these: 'off-topic', 'too heated', 'resolved', 'spam' "
@@ -978,7 +975,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         merge_result = resp.status_code == 204
         self._persist(
             merge_result,
-            filename=f"merge_result.json",
+            filename=f"pull_{pull_number}_merge_result.json",
             level="log",
             post_msg=f"Pull request #{pull_number} merged status: {merge_result}.",
         )
@@ -1006,14 +1003,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         if sha is not None:
             payload["sha"] = sha
         if merge_method is not None:
-            #
             match merge_method:
-                case "merge":
-                    print(f'⚠️ Try merge #{pull_number} by "merge"')
-                case "squash":
-                    print(f'⚠️ Try merge #{pull_number} by "squash"')
-                case "rebase":
-                    print(f'⚠️ Try merge #{pull_number} by "rebase"')
+                case "merge" | "squash" | "rebase":
+                    print(f"⚠️ Try merge #{pull_number} by {merge_method}")
                 case _:
                     raise ValueError(
                         'The merge method to use should be one of: "merge, "squash", "rebase"'
@@ -1054,8 +1046,504 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         return data
 
     ## Review comments
-    ## TODO fill this subsection APIs from reading https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28
+    def list_repo_pull_review_comments(
+        self,
+        sort: str | None = None,
+        direction: str | None = None,
+        since: str | None = None,
+        per_page: int = 30,
+        page: int = 1,
+    ) -> list[dict[str, Any]]:
+        """
+        List review comments across the repository.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#list-review-comments-in-a-repository
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/comments"
+        params: dict[str, Any] = {"per_page": per_page, "page": page}
+        if sort is not None:
+            params["sort"] = sort
+            if direction is not None:
+                params["direction"] = direction
+        elif direction is not None:
+            print("⚠️ Ignoring direction since sort is not specified.")
+        if since is not None:
+            params["since"] = since
+        resp = self._get_request(url, params=params)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_review_comments_repo_{sort}_page_{page}.json",
+            level="log",
+            post_msg=f"Fetched {len(data)} repo pull review comments (sort={sort}).",
+        )
+        return data
 
+    def get_pull_review_comment(self, comment_id: int) -> dict[str, Any]:
+        """
+        Get a review comment by ID.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#get-a-review-comment-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/comments/{comment_id}"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_review_comment_{comment_id}.json",
+            level="log",
+            post_msg=f"Fetched pull review comment #{comment_id}.",
+        )
+        return data
+
+    def update_pull_review_comment(self, comment_id: int, body: str) -> dict[str, Any]:
+        """
+        Update a pull request review comment.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#update-a-review-comment-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/comments/{comment_id}"
+        payload: dict[str, Any] = {"body": body}
+        resp = self._patch_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_review_comment_{comment_id}_updated.json",
+            level="log",
+            post_msg=f"Pull review comment #{comment_id} updated.",
+        )
+        return data
+
+    def delete_pull_review_comment(self, comment_id: int) -> bool:
+        """
+        Delete a pull request review comment.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#delete-a-review-comment-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/comments/{comment_id}"
+        resp = self._delete_request(url)
+        delete_result = resp.status_code == 204
+        self._persist(
+            delete_result,
+            filename=f"pull_review_comment_{comment_id}_deleted.json",
+            level="log",
+            post_msg=(
+                f"Delete pull review comment #{comment_id}. "
+                f"HTTP response status {resp.status_code}"
+            ),
+        )
+        return delete_result
+
+    def list_pull_review_comments(
+        self,
+        pull_number: int,
+        sort: str | None = None,
+        direction: str | None = None,
+        since: str | None = None,
+        per_page: int = 30,
+        page: int = 1,
+    ) -> list[dict[str, Any]]:
+        """
+        List all review comments for a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#list-review-comments-on-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/comments"
+        params: dict[str, Any] = {"per_page": per_page, "page": page}
+        if sort is not None:
+            params["sort"] = sort
+            if direction is not None:
+                params["direction"] = direction
+        elif direction is not None:
+            print("⚠️ Ignoring direction since sort is not specified.")
+        if since is not None:
+            params["since"] = since
+        resp = self._get_request(url, params=params)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_comments_{sort}_page_{page}.json",
+            level="log",
+            post_msg=f"Fetched {len(data)} review comments for pull #{pull_number}.",
+        )
+        return data
+
+    def create_pull_review_comment(
+        self,
+        pull_number: int,
+        body: str,
+        commit_id: str | None = None,
+        path: str | None = None,
+        position: int | None = None,
+        line: int | None = None,
+        side: str | None = None,
+        start_line: int | None = None,
+        start_side: str | None = None,
+        in_reply_to: int | None = None,
+        subject_type: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a pull request review comment (or reply).
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#create-a-review-comment-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/comments"
+        payload: dict[str, Any] = {"body": body}
+
+        if in_reply_to is not None:
+            # When specify `in_reply_to`, all parameters other than `body` are ignored
+            payload["in_reply_to"] = in_reply_to
+        else:
+            if commit_id is None or path is None:
+                raise ValueError(
+                    "commit_id and path are required when creating a new review comment."
+                )
+            payload["commit_id"] = commit_id
+            payload["path"] = path
+            if subject_type is not None:
+                payload["subject_type"] = subject_type
+
+            if position is not None:
+                # This parameter is closing down. Use `line` instead
+                payload["position"] = position
+            else:
+                if line is None:
+                    raise ValueError(
+                        "Either position or line/side must be provided for review comments."
+                    )
+                if side is None:
+                    raise ValueError("`side` is required when `line` is provided.")
+                payload["line"] = line
+                payload["side"] = side
+
+                if start_line is not None:
+                    if start_side is None:
+                        raise ValueError(
+                            "`start_side` is required when `start_line` is provided."
+                        )
+                    payload["start_line"] = start_line
+                    payload["start_side"] = start_side
+                elif start_side is not None:
+                    raise ValueError(
+                        "`start_line` must be set when `start_side` is provided."
+                    )
+
+        resp = self._post_request(url, payload=payload)
+        data = resp.json()
+        comment_id = data.get("id", "unknown")
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_comment_{comment_id}_created.json",
+            level="log",
+            post_msg=f"Pull review comment #{comment_id} for pull #{pull_number} created.",
+        )
+        return data
+
+    def create_reply_pull_review_comment(
+        self, pull_number: int, comment_id: int, body: str
+    ) -> dict[str, Any]:
+        """
+        Create a reply to a review comment.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#create-a-reply-for-a-review-comment
+        """
+        # Replies to replies are not supported.
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/comments/{comment_id}/replies"
+        payload: dict[str, Any] = {"body": body}
+        resp = self._post_request(url, payload=payload)
+        data = resp.json()
+        reply_id = data.get("id", "unknown")
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_comment_{comment_id}_replied_{reply_id}.json",
+            level="log",
+            post_msg=f"Pull reply to review comment #{comment_id}, reply_id #{reply_id}, for pull #{pull_number} created.",
+        )
+        return data
+
+    ## Review requests
+    def list_pull_requested_reviewers(
+        self, pull_number: int, output_filename: str | None = None
+    ) -> dict[str, Any]:
+        """
+        List requested reviewers for a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/review-requests?apiVersion=2022-11-28#list-requested-reviewers-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/requested_reviewers"
+        resp = self._get_request(url)
+        data = resp.json()
+        filename = output_filename or f"pull_{pull_number}_requested_reviewers.json"
+        self._persist(
+            data,
+            filename=filename,
+            level="log",
+            post_msg=f"Fetched requested reviewers for pull #{pull_number}.",
+        )
+        return data
+
+    def request_pull_reviewers(
+        self,
+        pull_number: int,
+        reviewers: list[str] | None = None,
+        team_reviewers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Request reviewers for a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/review-requests?apiVersion=2022-11-28#request-reviewers-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/requested_reviewers"
+        payload: dict[str, Any] = {}
+        if reviewers:
+            payload["reviewers"] = reviewers
+        if team_reviewers:
+            payload["team_reviewers"] = team_reviewers
+        if not payload:
+            raise ValueError(
+                "At least one reviewer or team_reviewer must be specified."
+            )
+        resp = self._post_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_requested_reviewers_added.json",
+            level="log",
+            post_msg=f"Requested reviewers for pull #{pull_number}.",
+        )
+        return data
+
+    def remove_pull_reviewers(
+        self,
+        pull_number: int,
+        reviewers: list[str] | None = None,
+        team_reviewers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Remove requested reviewers from a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/review-requests?apiVersion=2022-11-28#remove-requested-reviewers-from-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/requested_reviewers"
+        payload: dict[str, Any] = {}
+        ## Not sure if None is ok, marked as required in the doc
+        # if reviewers is None:
+        #     raise ValueError("Reviewers list should not be empty.")
+        # payload["reviewers"] = reviewers
+        if reviewers:
+            payload["reviewers"] = reviewers
+        if team_reviewers:
+            payload["team_reviewers"] = team_reviewers
+        resp = self._delete_request(url, payload=payload)
+        data = resp.json() if resp.content else {}
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_requested_reviewers_removed.json",
+            level="log",
+            post_msg=f"Removed requested reviewers {reviewers}, {team_reviewers} for pull #{pull_number}.",
+        )
+        return data
+
+    ## Review
+    def list_pull_reviews(
+        self, pull_number: int, per_page: int = 30, page: int = 1
+    ) -> list[dict[str, Any]]:
+        """
+        List reviews for a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#list-reviews-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews"
+        params: dict[str, Any] = {"per_page": per_page, "page": page}
+        resp = self._get_request(url, params=params)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_reviews_page_{page}.json",
+            level="log",
+            post_msg=f"Fetched {len(data)} reviews for pull #{pull_number}.",
+        )
+        return data
+
+    def create_pull_review(
+        self,
+        pull_number: int,
+        commit_id: str | None = None,
+        body: str | None = None,
+        event: str | None = None,
+        comments: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a pull request review.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#create-a-review-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews"
+        payload: dict[str, Any] = {}
+        if body is not None:
+            payload["body"] = body
+        if event is not None:
+            payload["event"] = event
+        # The comments properties should follow the docs
+        if comments is not None:
+            payload["comments"] = comments
+        if commit_id is not None:
+            payload["commit_id"] = commit_id
+        if body is None and event is None and comments is None:
+            raise ValueError("Must specify at least one of body, event, or comments.")
+        resp = self._post_request(url, payload=payload)
+        data = resp.json()
+        review_id = data.get("id", "unknown")
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_{review_id}_created.json",
+            level="log",
+            post_msg=f"Created review #{review_id} for pull #{pull_number}.",
+        )
+        return data
+
+    def get_pull_review(self, pull_number: int, review_id: int) -> dict[str, Any]:
+        """
+        Get a single review for a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#get-a-review-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_{review_id}.json",
+            level="log",
+            post_msg=f"Fetched pull #{pull_number} review #{review_id}.",
+        )
+        return data
+
+    def update_pull_review(
+        self, pull_number: int, review_id: int, body: str
+    ) -> dict[str, Any]:
+        """
+        Update a pull request review.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#update-a-review-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}"
+        payload: dict[str, Any] = {"body": body}
+        resp = self._put_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_{review_id}_updated.json",
+            level="log",
+            post_msg=f"Updated review #{review_id} for pull #{pull_number}.",
+        )
+        return data
+
+    def delete_pull_pending_review(self, pull_number: int, review_id: int):
+        """
+        Delete a pending review for a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#delete-a-pending-review-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}"
+        resp = self._delete_request(url)
+        delete_result = resp.status_code in {200, 204}
+        # With body
+        data = resp.json() if resp.content else {}
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_{review_id}_deleted.json",
+            level="log",
+            post_msg=(
+                f"Delete review #{review_id} for pull #{pull_number}, result: {delete_result}. "
+                f"HTTP response status {resp.status_code}"
+            ),
+        )
+        return data
+
+    def list_pull_review_comments_for_review(
+        self, pull_number: int, review_id: int, per_page: int = 30, page: int = 1
+    ) -> list[dict[str, Any]]:
+        """
+        List comments for a pull request review.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#list-comments-for-a-pull-request-review
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}/comments"
+        params: dict[str, Any] = {"per_page": per_page, "page": page}
+        resp = self._get_request(url, params=params)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_{review_id}_comments_page_{page}.json",
+            level="log",
+            post_msg=(
+                f"Fetched {len(data)} comments for review #{review_id} on pull #{pull_number}."
+            ),
+        )
+        return data
+
+    def dismiss_pull_review(
+        self,
+        pull_number: int,
+        review_id: int,
+        message: str,
+        event: str,
+    ) -> dict[str, Any]:
+        """
+        Dismiss a review for a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#dismiss-a-review-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}/dismissals"
+        payload: dict[str, Any] = {"message": message}
+        if event != "DISMISS":
+            raise ValueError('event only accept "DISMISS"')
+        payload["event"] = "DISMISS"
+        resp = self._put_request(url, payload=payload)
+        dismiss_result = resp.status_code in {200, 204}
+        # With body
+        data = resp.json() if resp.content else {}
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_{review_id}_dismissed.json, result {dismiss_result}",
+            level="log",
+            post_msg=f"Dismissed review #{review_id} for pull #{pull_number}.",
+        )
+        return data
+
+    def submit_pull_review(
+        self,
+        pull_number: int,
+        review_id: int,
+        event: str,
+        body: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Submit a review for a pull request.
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#submit-a-review-for-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}/events"
+        match event:
+            case "APPROVE" | "REQUEST_CHANGES" | "COMMENT":
+                print(
+                    f"⚠️ Try submit pull #{pull_number} review_id {review_id} as {event}"
+                )
+            case _:
+                raise ValueError("event must be APPROVE, REQUEST_CHANGES, or COMMENT")
+        payload: dict[str, Any] = {"event": event}
+        if body is not None:
+            payload["body"] = body
+        resp = self._post_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_review_{review_id}_submitted.json",
+            level="log",
+            post_msg=f"Submitted review #{review_id} for pull #{pull_number} with event {event}.",
+        )
+        return data
 
     # Markdown
     def render_markdown(
