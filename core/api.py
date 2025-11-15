@@ -447,19 +447,66 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         return success
 
     ## TODO Github-hosted runners
-    ## Link: https://docs.github.com/en/rest/actions/hosted-runners
+    ## Link: https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28
 
     ## TODO OIDC
-    ## Link: https://docs.github.com/en/rest/actions/oidc
+    ## Link: https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28
 
     ## TODO Permissions
-    ## Link: https://docs.github.com/en/rest/actions/permissions
+    ## Link: https://docs.github.com/en/rest/actions/permissions?apiVersion=2022-11-28
 
     ## TODO Secrets
-    ## Link: https://docs.github.com/en/rest/actions/secrets
+    ## Link: https://docs.github.com/en/rest/actions/secrets?apiVersion=2022-11-28
 
     ## TODO Self-hosted runner groups
-    ## Link: https://docs.github.com/en/rest/actions/self-hosted-runner-groups
+    ## Link: https://docs.github.com/en/rest/actions/self-hosted-runner-groups?apiVersion=2022-11-28
+
+    ## TODO Self-hosted runners
+    ## Link: https://docs.github.com/en/rest/actions/self-hosted-runners?apiVersion=2022-11-28
+
+    ## TODO Variables
+    ## Link: https://docs.github.com/en/rest/actions/variables?apiVersion=2022-11-28
+
+    ## TODO Workflow jobs
+    ## Link: https://docs.github.com/en/rest/actions/workflow-jobs?apiVersion=2022-11-28
+
+    ## TODO Workflow runs
+    ## Link: https://docs.github.com/en/rest/actions/workflow-runs?apiVersion=2022-11-28
+
+    ## TODO Workflows
+    ## Link: https://docs.github.com/en/rest/actions/workflows?apiVersion=2022-11-28
+
+    # Activity
+    ## TODO Events
+    ## Link: https://docs.github.com/en/rest/activity/events?apiVersion=2022-11-28
+
+    ## TODO Feeds
+    ## Link: https://docs.github.com/en/rest/activity/feeds?apiVersion=2022-11-28
+
+    ## TODO Notifications
+    ## Link: https://docs.github.com/en/rest/activity/notifications?apiVersion=2022-11-28
+
+    ## TODO Starring
+    ## Link: https://docs.github.com/en/rest/activity/starring?apiVersion=2022-11-28
+
+    ## TODO Watching
+    ## Link: https://docs.github.com/en/rest/activity/watching?apiVersion=2022-11-28
+
+    # Apps
+    ## TODO GitHub Apps
+    ## Link: https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28
+
+    ## TODO Installations
+    ## Link: https://docs.github.com/en/rest/apps/installations?apiVersion=2022-11-28
+
+    ## TODO Marketplace
+    ## Link: https://docs.github.com/en/rest/apps/marketplace?apiVersion=2022-11-28
+
+    ## TODO OAuth authorizations
+    ## Link: https://docs.github.com/en/rest/apps/oauth-applications?apiVersion=2022-11-28
+
+    ## TODO Webhooks
+    ## Link: https://docs.github.com/en/rest/apps/webhooks?apiVersion=2022-11-28
 
     # Repository
     def get_repo_info(self) -> dict[str, Any]:
@@ -739,17 +786,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return unlock_result
 
-    # Pull requets
+    # Pull requests
     # Pull requests are a type of issue. The common actions should be performed through the issues API endpoints
-    # Link relations:
-    # `self``: The API location of this pull request
-    # `html`: The HTML location of this pull request
-    # `issue`: The API location of this pull request's issue
-    # `comments`: The API location of this pull request's issue comments
-    # `review_comments`: The API location of this pull request's review comments
-    # `review_comment`: The URL template to construct the API location for a review comment in this pull request's repository
-    # `commits`: The API location of this pull request's commits
-    # `statuses`: The API location of this pull request's commit statuses, which are the statuses of its head branch
+    ## Pull requests
     def list_repo_pulls(
         self,
         state: str = "open",
@@ -943,25 +982,80 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             level="log",
             post_msg=f"Pull request #{pull_number} merged status: {merge_result}.",
         )
-
         return merge_result
 
-    # TODO implement merge_pull and update_pull_branch
-    # def merge_pull(
-    #     self,
-    #     pull_number: int,
-    #     commit_title: str | None = None,
-    #     commit_message: str | None = None,
-    #     sha: str | None = None,
-    #     merge_method: str | None = None
-    # ):
-    #     pass
-    # def update_pull_branch(
-    #     self,
-    #     pull_number: int,
-    #     expected_head_sha: str | None = None,
-    # ):
-    #     pass
+    def merge_pull(
+        self,
+        pull_number: int,
+        commit_title: str | None = None,
+        commit_message: str | None = None,
+        sha: str | None = None,
+        merge_method: str | None = None,
+    ):
+        """
+        Merge a pull request into the base branch. This endpoint triggers notifications.
+        GitHub Docs:
+        http://pulldocs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#merge-a-pull-request
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/merge"
+        payload: dict[str, Any] = {}
+        if commit_title is not None:
+            payload["commit_title"] = commit_title
+        if commit_message is not None:
+            payload["commit_message"] = commit_message
+        if sha is not None:
+            payload["sha"] = sha
+        if merge_method is not None:
+            #
+            match merge_method:
+                case "merge":
+                    print(f'⚠️ Try merge #{pull_number} by "merge"')
+                case "squash":
+                    print(f'⚠️ Try merge #{pull_number} by "squash"')
+                case "rebase":
+                    print(f'⚠️ Try merge #{pull_number} by "rebase"')
+                case _:
+                    raise ValueError(
+                        'The merge method to use should be one of: "merge, "squash", "rebase"'
+                    )
+            payload["merge_method"] = merge_method
+        resp = self._put_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_try_merge.json",
+            level="log",
+            post_msg=f"Try merge pull request #{pull_number}.",
+        )
+        return data
+
+    def update_pull_branch(
+        self,
+        pull_number: int,
+        expected_head_sha: str | None = None,
+    ):
+        """
+        Update the pull request branch by merging HEAD from base branch
+        GitHub Docs:
+        https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#update-a-pull-request-branch
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/update-branch"
+        payload: dict[str, Any] = {}
+        if expected_head_sha is not None:
+            payload["expected_head_sha"] = expected_head_sha
+        resp = self._put_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"pull_{pull_number}_update_branch.json",
+            level="log",
+            post_msg=f"Update pull request #{pull_number} branch.",
+        )
+        return data
+
+    ## Review comments
+    ## TODO fill this subsection APIs from reading https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28
+
 
     # Markdown
     def render_markdown(
@@ -1029,7 +1123,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         print(f"Rendered markdown raw saved -> {output_path}")
         return rendered
 
-    # 💬 Comments
+    # Comments
     def list_repo_issue_comments(
         self,
         sort: str | None = None,
