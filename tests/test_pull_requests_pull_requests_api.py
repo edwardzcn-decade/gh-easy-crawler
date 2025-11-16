@@ -25,7 +25,7 @@ from core.config import (
 
 # For create pr only
 # The name of the branch where your changes are implemented.
-TEST_PULL_REQUEST_HEAD = "v0.2.0"
+TEST_PULL_REQUEST_HEAD = "v0.3.1"
 # The name of the branch where your changes are pulled into. e.g. main/master
 TEST_PULL_REQUEST_BASE = "main"
 
