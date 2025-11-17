@@ -33,10 +33,18 @@ METRIC_HEADERS = [
     "tool_merge_commit_hash",
     "tool_labels",
     "tool_files_changed",
-    "tool_count_comments",
+    "tool_total_comments_count",
     "tool_total_chars",
     "tool_total_words",
     "tool_total_bytes",
+    "issue_comments_count",
+    "issue_comments_chars",
+    "issue_comments_words",
+    "issue_comments_bytes",
+    "review_comments_count",
+    "review_comments_chars",
+    "review_comments_words",
+    "review_comments_bytes",
 ]
 METRIC_OUTPUT_PATH = "cdc_output/csv/"
 
@@ -150,6 +158,23 @@ def _load_cached_issue_comments(pull_number: int) -> Tuple[list[dict], bool]:
     return cached_comments, cache_hit
 
 
+def _load_cached_review_comments(pull_number: int) -> Tuple[list[dict], bool]:
+    """Return cached review comments and a flag indicating whether cache files existed."""
+    base = Path(OUTPUT_DIR)
+    page = 1
+    cached_comments: list[dict] = []
+    cache_hit = False
+    while True:
+        path = base / f"pull_{pull_number}_review_comments_None_page_{page}.json"
+        if not path.exists():
+            break
+        cache_hit = True
+        with path.open("r", encoding="utf-8") as fh:
+            cached_comments.extend(json.load(fh))
+        page += 1
+    return cached_comments, cache_hit
+
+
 def _load_cached_pull_files(pull_number: int) -> Tuple[list[dict], bool]:
     """Return cached file-change payloads and whether cache files existed."""
     base = Path(OUTPUT_DIR)
@@ -180,7 +205,9 @@ def _load_existing_metrics(csv_path: Path) -> list[dict]:
                 if any(cell.strip() for cell in raw_row):
                     header = raw_row
                     if header != METRIC_HEADERS:
-                        raise ValueError("The readed header is not euql to METRIC_HEADERS. Check it")
+                        raise ValueError(
+                            "The readed header is not euql to METRIC_HEADERS. Check it"
+                        )
                 continue
             if not raw_row or not any(cell.strip() for cell in raw_row):
                 continue
@@ -192,23 +219,36 @@ def _load_existing_metrics(csv_path: Path) -> list[dict]:
     return rows
 
 
-def _check_if_append(
-    mode: str, visited: Set[str], old_row: dict, new_row: dict, append_rows: list
+def _update_merge_append(
+    mode: str, visited_merged: Set[str], old_row: dict, new_row: dict, append_rows: list
 ):
-    """Inline update or append"""
+    """Inline update (merge) or append"""
     if mode == "update":
         # update in line and not add in append_rows
+        old_row.clear()
         old_row.update(new_row)
     elif mode == "merge":
-        raise ValueError("'merge' mode is not supported yet")
+        # only merge in output when the pull status is merged
+        id = new_row.get("bug_id")
+        if id is None:
+            raise ValueError("'bug_id' in new row is None")
+        is_merged_at_exist: bool = new_row.get("tool_merged_at") != ""
+        if is_merged_at_exist:
+            # Only one is merged
+            assert id not in visited_merged
+            visited_merged.add(id)
+            old_row.update(new_row)
+        else:
+            append_rows.append(new_row)
+
     elif mode == "append":
         # append in append_rows and do not change the old row
         id = new_row.get("bug_id")
         if id is None:
             raise ValueError("'bug_id' in new row is None")
-        if id not in visited:
+        if id not in visited_merged:
             # First visit
-            visited.add(id)
+            visited_merged.add(id)
             old_row.update(new_row)
         else:
             # Visited
@@ -226,9 +266,38 @@ def write_rows_csv_file(final_path: Path, headers: list[str], rows: list):
             writer.writerow([row.get(key, "") for key in headers])
 
 
-# TODO Need implementation of `list_review_comments`/`list_pull_comments`
-def collect_review_comments():
-    pass
+def collect_review_comments(crawler: GitHubRESTCrawler, pull_number: int):
+    """
+    Gather review commets for a pull request.
+    """
+    per_page = 100
+    review_comments_chars = review_comments_words = review_comments_bytes = 0
+    review_comments, cached = _load_cached_review_comments(pull_number)
+    if not cached:
+        page = 1
+        while True:
+            batch = crawler.list_pull_review_comments(
+                pull_number, per_page=per_page, page=page
+            )
+            if not batch:
+                break
+            review_comments.extend(batch)
+            if len(batch) < per_page:
+                break
+            page += 1
+            time.sleep(API_CALL_DELAY)
+    for comment in review_comments:
+        text = str(comment.get("body") or "").strip()
+        review_comments_chars += len(text)
+        review_comments_words += len(text.split())
+        review_comments_bytes += len(text.encode("utf-8"))
+
+    return {
+        "review_comments_count": len(review_comments),
+        "review_comments_chars": review_comments_chars,
+        "review_comments_words": review_comments_words,
+        "review_comments_bytes": review_comments_bytes,
+    }
 
 
 def collect_issue_comments(
@@ -239,8 +308,8 @@ def collect_issue_comments(
     Prefer cached pages and only hit the API when data is missing.
     """
     per_page = 100
-    total_chars = total_words = total_bytes = 0
-    comments, cached = _load_cached_issue_comments(pull_number)
+    issue_comments_chars = issue_comments_words = issue_comments_bytes = 0
+    issue_comments, cached = _load_cached_issue_comments(pull_number)
 
     if not cached:
         page = 1
@@ -252,23 +321,23 @@ def collect_issue_comments(
             )
             if not batch:
                 break
-            comments.extend(batch)
+            issue_comments.extend(batch)
             if len(batch) < per_page:
                 break
             page += 1
             time.sleep(API_CALL_DELAY)
 
-    for comment in comments:
+    for comment in issue_comments:
         text = str(comment.get("body") or "").strip()
-        total_chars += len(text)
-        total_words += len(text.split())
-        total_bytes += len(text.encode("utf-8"))
+        issue_comments_chars += len(text)
+        issue_comments_words += len(text.split())
+        issue_comments_bytes += len(text.encode("utf-8"))
 
     return {
-        "count_comments": len(comments),
-        "total_chars": total_chars,
-        "total_words": total_words,
-        "total_bytes": total_bytes,
+        "issue_comments_count": len(issue_comments),
+        "issue_comments_chars": issue_comments_chars,
+        "issue_comments_words": issue_comments_words,
+        "issue_comments_bytes": issue_comments_bytes,
     }
 
 
@@ -308,7 +377,6 @@ def summarize_pulls(
     csv_path: str,
     force_update: bool = False,
 ) -> None:
-    # TODO solve the overwrite problem
     """Output key pull request metadata in a compact table."""
     if not pulls:
         print("No pull requests matched the filter criteria.")
@@ -320,7 +388,7 @@ def summarize_pulls(
         for existing in rows
         if existing.get("bug_id")
     }
-    rows_visited: Set[str] = set()
+    rows_visited_merged: Set[str] = set()
     not_included_rows: list[dict] = []
     append_rows: list[dict] = []
     for pr in pulls:
@@ -344,8 +412,9 @@ def summarize_pulls(
         # Call other APIs
         files_changed: list[str] = collect_files_changed(crawler, pull_number)
         time.sleep(API_CALL_DELAY)
-        comments_detail = collect_issue_comments(crawler, pull_number)
+        issue_comments_detail = collect_issue_comments(crawler, pull_number)
         # TODO collect review comments and other relevant things
+        review_comments_detail = collect_review_comments(crawler, pull_number)
 
         # Must Including FLINK-XXXX
         new_row = {
@@ -357,11 +426,50 @@ def summarize_pulls(
             "tool_merge_commit_hash": hash or "",
             "tool_labels": ";".join(labels),
             "tool_files_changed": ";".join(files_changed),
-            "tool_count_comments": str(comments_detail.get("count_comments", 0)),
-            "tool_total_chars": str(comments_detail.get("total_chars", 0)),
-            "tool_total_words": str(comments_detail.get("total_words", 0)),
-            "tool_total_bytes": str(comments_detail.get("total_bytes", 0)),
+            # "tool_total_comments_count": str(issue_comments_detail.get("count_comments", 0)),
+            # "tool_total_chars": str(issue_comments_detail.get("total_chars", 0)),
+            # "tool_total_words": str(issue_comments_detail.get("total_words", 0)),
+            # "tool_total_bytes": str(issue_comments_detail.get("total_bytes", 0)),
+            # "issue_comments_count": issue_comments_detail.get(
+            #     "issue_comments_count", 0
+            # ),
+            # "issue_comments_chars": issue_comments_detail.get(
+            #     "issue_comments_chars", 0
+            # ),
+            # "issue_comments_words": issue_comments_detail.get(
+            #     "issue_comments_words", 0
+            # ),
+            # "issue_comments_bytes": issue_comments_detail.get(
+            #     "issue_comments_bytes", 0
+            # ),
+            # "review_comments_count": review_comments_detail.get(
+            #     "review_comments_count", 0
+            # ),
+            # "review_comments_chars": review_comments_detail.get(
+            #     "review_comments_chars", 0
+            # ),
+            # "review_comments_words": review_comments_detail.get(
+            #     "review_comments_words", 0
+            # ),
+            # "review_comments_bytes": review_comments_detail.get(
+            #     "review_comments_bytes", 0
+            # ),
         }
+        new_row |= issue_comments_detail
+        new_row |= review_comments_detail
+        new_row["tool_total_comments_count"] = (
+            new_row["issue_comments_count"] + new_row["review_comments_count"]
+        )
+        new_row["tool_total_chars"] = (
+            new_row["issue_comments_chars"] + new_row["review_comments_chars"]
+        )
+        new_row["tool_total_words"] = (
+            new_row["issue_comments_words"] + new_row["review_comments_words"]
+        )
+        new_row["tool_total_bytes"] = (
+            new_row["issue_comments_bytes"] + new_row["review_comments_bytes"]
+        )
+
         row = rows_by_bug_hashmap.get(bug_id)
         if row is None:
             # Not in manual bug list add to `not_included.csv`
@@ -370,12 +478,19 @@ def summarize_pulls(
             # In manual bug list
             if force_update:
                 # force update local cache (final write)
-                row.clear()
-                row.update(new_row)
+                # row.clear()
+                # row.update(new_row)
+                _update_merge_append(
+                    mode="update",
+                    visited_merged=rows_visited_merged,
+                    old_row=row,
+                    new_row=new_row,
+                    append_rows=append_rows,
+                )
             else:
-                _check_if_append(
-                    mode="append",
-                    visited=rows_visited,
+                _update_merge_append(
+                    mode="merge",
+                    visited_merged=rows_visited_merged,
                     old_row=row,
                     new_row=new_row,
                     append_rows=append_rows,
