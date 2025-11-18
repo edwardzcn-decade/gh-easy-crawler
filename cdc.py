@@ -49,6 +49,10 @@ METRIC_HEADERS = [
     "pr_detail_body_chars",
     "pr_detail_comments_count",
     "pr_detail_review_comments_count",
+    "review_blocs_count",
+    "review_blocs_chars",
+    "review_blocs_words",
+    "review_blocs_bytes",
 ]
 METRIC_OUTPUT_PATH = "cdc_output/csv/"
 
@@ -176,6 +180,23 @@ def _load_cached_review_comments(pull_number: int) -> Tuple[list[dict], bool]:
             cached_comments.extend(json.load(fh))
         page += 1
     return cached_comments, cache_hit
+
+
+def _load_cached_review_blocs(pull_number: int) -> Tuple[list[dict], bool]:
+    """Return cached pull reviews and a flag indicating whether cache files existed."""
+    base = Path(OUTPUT_DIR)
+    page = 1
+    cached_reviews: list[dict] = []
+    cache_hit = False
+    while True:
+        path = base / f"pull_{pull_number}_reviews_page_{page}.json"
+        if not path.exists():
+            break
+        cache_hit = True
+        with path.open("r", encoding="utf-8") as fh:
+            cached_reviews.extend(json.load(fh))
+        page += 1
+    return cached_reviews, cache_hit
 
 
 def _load_cached_pull_files(pull_number: int) -> Tuple[list[dict], bool]:
@@ -350,40 +371,6 @@ def collect_get_pr_detail(crawler: GitHubRESTCrawler, pull_number: int):
         "pr_detail_review_comments_count": pr_detail_review_comments_count,
     }
 
-def collect_review_comments(crawler: GitHubRESTCrawler, pull_number: int):
-    """
-    Gather review commets for a pull request.
-    """
-    per_page = 100
-    review_comments_chars = review_comments_words = review_comments_bytes = 0
-    review_comments, cached = _load_cached_review_comments(pull_number)
-    if not cached:
-        page = 1
-        while True:
-            batch = crawler.list_pull_review_comments(
-                pull_number, per_page=per_page, page=page
-            )
-            time.sleep(API_CALL_DELAY)
-            if not batch:
-                break
-            review_comments.extend(batch)
-            if len(batch) < per_page:
-                break
-            page += 1
-    for comment in review_comments:
-        text = str(comment.get("body","").strip())
-        review_comments_chars += len(text)
-        review_comments_words += len(text.split())
-        review_comments_bytes += len(text.encode("utf-8"))
-
-    return {
-        "review_comments_count": len(review_comments),
-        "review_comments_chars": review_comments_chars,
-        "review_comments_words": review_comments_words,
-        "review_comments_bytes": review_comments_bytes,
-    }
-
-
 def collect_issue_comments(
     crawler: GitHubRESTCrawler, pull_number: int
 ) -> dict[str, int]:
@@ -422,6 +409,89 @@ def collect_issue_comments(
         "issue_comments_chars": issue_comments_chars,
         "issue_comments_words": issue_comments_words,
         "issue_comments_bytes": issue_comments_bytes,
+    }
+
+def collect_review_comments(crawler: GitHubRESTCrawler, pull_number: int):
+    """
+    Gather review commets for a pull request.
+    """
+    per_page = 100
+    review_comments_chars = review_comments_words = review_comments_bytes = 0
+    review_comments, cached = _load_cached_review_comments(pull_number)
+    if not cached:
+        page = 1
+        while True:
+            batch = crawler.list_pull_review_comments(
+                pull_number, per_page=per_page, page=page
+            )
+            time.sleep(API_CALL_DELAY)
+            if not batch:
+                break
+            review_comments.extend(batch)
+            if len(batch) < per_page:
+                break
+            page += 1
+    for comment in review_comments:
+        text = str(comment.get("body","").strip())
+        review_comments_chars += len(text)
+        review_comments_words += len(text.split())
+        review_comments_bytes += len(text.encode("utf-8"))
+
+    return {
+        "review_comments_count": len(review_comments),
+        "review_comments_chars": review_comments_chars,
+        "review_comments_words": review_comments_words,
+        "review_comments_bytes": review_comments_bytes,
+    }
+
+
+def collect_review_blocs(crawler: GitHubRESTCrawler,pull_number: int):
+    """
+    Gather review detail(body) for a pull request.
+    """
+    per_page = 100
+    review_blocs, cached = _load_cached_review_blocs(pull_number)
+    review_blocs_chars = review_blocs_words = review_blocs_bytes = 0
+
+    if not cached:
+        page = 1
+        while True:
+            batch = crawler.list_pull_reviews(
+                pull_number, per_page=per_page, page=page
+            )
+            time.sleep(API_CALL_DELAY)
+            if not batch:
+                break
+            # Filter review bloc with body
+            filtered = [
+                x
+                for x in batch
+                if (x.get("body") or "").strip() != ""
+            ]
+            review_blocs.extend(filtered)
+            if len(batch) < per_page:
+                break
+            page += 1
+
+    # Ensure only reviews with non-empty body are considered,
+    # regardless of whether they came from cache or live API calls.
+    review_blocs = [
+        bloc
+        for bloc in review_blocs
+        if (bloc.get("body") or "").strip() != ""
+    ]
+
+    for bloc in review_blocs:
+        text = (bloc.get("body") or "").strip()
+        review_blocs_chars += len(text)
+        review_blocs_words += len(text.split())
+        review_blocs_bytes += len(text.encode("utf-8"))
+
+    return {
+        "review_blocs_count": len(review_blocs),
+        "review_blocs_chars": review_blocs_chars,
+        "review_blocs_words": review_blocs_words,
+        "review_blocs_bytes": review_blocs_bytes,
     }
 
 
@@ -500,6 +570,7 @@ def summarize_pulls(
         files_changed: list[str] = collect_files_changed(crawler, pull_number)
         issue_comments_detail = collect_issue_comments(crawler, pull_number)
         review_comments_detail = collect_review_comments(crawler, pull_number)
+        review_blocs_detail = collect_review_blocs(crawler, pull_number)
 
         # Must Including FLINK-XXXX
         new_row = {
@@ -545,17 +616,19 @@ def summarize_pulls(
         new_row |= pr_detail
         new_row |= issue_comments_detail
         new_row |= review_comments_detail
+        new_row |= review_blocs_detail
         new_row["tool_total_comments_count"] = (
-            new_row["issue_comments_count"] + new_row["review_comments_count"]
+            # more reasonable for get from pr_detail (some outdated or deleted comments)
+            new_row["issue_comments_count"] + new_row["review_comments_count"] + new_row["review_blocs_count"]
         )
         new_row["tool_total_chars"] = (
-            new_row["issue_comments_chars"] + new_row["review_comments_chars"]
+            new_row["issue_comments_chars"] + new_row["review_comments_chars"] + new_row["review_blocs_chars"]
         )
         new_row["tool_total_words"] = (
-            new_row["issue_comments_words"] + new_row["review_comments_words"]
+            new_row["issue_comments_words"] + new_row["review_comments_words"] + new_row["review_blocs_words"]
         )
         new_row["tool_total_bytes"] = (
-            new_row["issue_comments_bytes"] + new_row["review_comments_bytes"]
+            new_row["issue_comments_bytes"] + new_row["review_comments_bytes"] + new_row["review_blocs_bytes"]
         )
 
         row = rows_by_bug_hashmap.get(bug_id)
