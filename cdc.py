@@ -23,7 +23,7 @@ GITHUB_REPO_NAME = "flink-cdc"
 OUTPUT_DIR = "cdc_output"
 START_TIMESTAMP = datetime(2024, 3, 5, 0, 0, 0, tzinfo=timezone.utc)
 TITLE_PATTERN = re.compile(r"\[[A-Z]+-\d+\]")
-API_CALL_DELAY = 0.3  # seconds
+API_CALL_DELAY = 0.5  # seconds
 METRIC_HEADERS = [
     "bug_id",
     "tool_created_at",
@@ -45,6 +45,10 @@ METRIC_HEADERS = [
     "review_comments_chars",
     "review_comments_words",
     "review_comments_bytes",
+    "pr_detail_title_chars",
+    "pr_detail_body_chars",
+    "pr_detail_comments_count",
+    "pr_detail_review_comments_count",
 ]
 METRIC_OUTPUT_PATH = "cdc_output/csv/"
 
@@ -140,7 +144,6 @@ def filter_pulls(raw_pulls: list[dict]) -> list[dict]:
 
     return filtered
 
-
 def _load_cached_issue_comments(pull_number: int) -> Tuple[list[dict], bool]:
     """Return cached issue comments and a flag indicating whether cache files existed."""
     base = Path(OUTPUT_DIR)
@@ -192,6 +195,17 @@ def _load_cached_pull_files(pull_number: int) -> Tuple[list[dict], bool]:
     return cached_files, cache_hit
 
 
+def _load_cached_pull_request(pull_number: int) -> Tuple[dict, bool]:
+    """Return cached pull request detail and whether a cache entry existed."""
+    base = Path(OUTPUT_DIR)
+    path = base / f"pull_{pull_number}.json"
+    if not path.exists():
+        return {}, False
+    with path.open("r", encoding="utf-8") as fh:
+        pr_detail = json.load(fh)
+    return pr_detail, True
+
+
 def _load_existing_metrics(csv_path: Path) -> list[dict]:
     """Read metrics CSV into dictionaries while preserving order."""
     if not csv_path.exists():
@@ -228,18 +242,27 @@ def _update_merge_append(
         old_row.clear()
         old_row.update(new_row)
     elif mode == "merge":
-        # only merge in output when the pull status is merged
+        # Only merge in output when the pull status is merged.
+        # TODO make sure the base branch is master
         id = new_row.get("bug_id")
         if id is None:
             raise ValueError("'bug_id' in new row is None")
         is_merged_at_exist: bool = new_row.get("tool_merged_at") != ""
         if is_merged_at_exist:
-            # Only one is merged
-            assert id not in visited_merged
-            visited_merged.add(id)
-            old_row.update(new_row)
+            # Only one is merged and base branch is master
+            base_name = new_row.get("base_name")
+            base_login = new_row.get("base_login")
+            if (base_name == "apache:master" or base_name == "master") and base_login == "apache":
+                if id in visited_merged:
+                    raise ValueError(f"Double merge {id}")
+                visited_merged.add(id)
+                old_row.update(new_row)
+            else:
+                # Merged to other branch
+                print(f"BP merge {id}, merged to {base_name}, user_login {base_login}")
         else:
             append_rows.append(new_row)
+
 
     elif mode == "append":
         # append in append_rows and do not change the old row
@@ -266,6 +289,57 @@ def write_rows_csv_file(final_path: Path, headers: list[str], rows: list):
             writer.writerow([row.get(key, "") for key in headers])
 
 
+def collect_files_changed(crawler: GitHubRESTCrawler, pull_number: int) -> list[str]:
+    """
+    Return filenames touched by a pull request, leveraging cached data when available.
+    """
+    per_page = 100
+    pr_files, cached = _load_cached_pull_files(pull_number)
+
+    if not cached:
+        page = 1
+        while True:
+            batch = crawler.list_pull_files(
+                pull_number,
+                per_page=per_page,
+                page=page,
+            )
+            if not batch:
+                break
+            pr_files.extend(batch)
+            if len(batch) < per_page:
+                break
+            page += 1
+            time.sleep(API_CALL_DELAY)
+
+    return list(filter(None, [f.get("filename") for f in pr_files]))
+
+
+def collect_labels(pr: dict) -> list[str]:
+    return list(filter(None, [l.get("name") for l in pr.get("labels", [])]))
+
+def collect_get_pr_detail(crawler: GitHubRESTCrawler, pull_number: int):
+    """
+    Gather needed pr detail from pull request itself
+    """
+    pr_detail_title_chars = pr_detail_body_chars = 0
+    pr_detail_comments_count = pr_detail_review_comments_count = 0
+
+    pr_detail, cached = _load_cached_pull_request(pull_number)
+    if not cached:
+        pr_detail = crawler.get_pull(pull_number)
+    pr_detail_title_chars = len(str(pr_detail.get("title", "").strip()))
+    pr_detail_body_chars = len(str(pr_detail.get("body", "").strip()))
+    pr_detail_comments_count = pr_detail.get("comments", 0)
+    pr_detail_review_comments_count = pr_detail.get("review_comments", 0)
+
+    return {
+        "pr_detail_title_chars": pr_detail_title_chars,
+        "pr_detail_body_chars": pr_detail_body_chars,
+        "pr_detail_comments_count": pr_detail_comments_count,
+        "pr_detail_review_comments_count": pr_detail_review_comments_count,
+    }
+
 def collect_review_comments(crawler: GitHubRESTCrawler, pull_number: int):
     """
     Gather review commets for a pull request.
@@ -287,7 +361,7 @@ def collect_review_comments(crawler: GitHubRESTCrawler, pull_number: int):
             page += 1
             time.sleep(API_CALL_DELAY)
     for comment in review_comments:
-        text = str(comment.get("body") or "").strip()
+        text = str(comment.get("body","").strip())
         review_comments_chars += len(text)
         review_comments_words += len(text.split())
         review_comments_bytes += len(text.encode("utf-8"))
@@ -341,34 +415,8 @@ def collect_issue_comments(
     }
 
 
-def collect_files_changed(crawler: GitHubRESTCrawler, pull_number: int) -> list[str]:
-    """
-    Return filenames touched by a pull request, leveraging cached data when available.
-    """
-    per_page = 100
-    pr_files, cached = _load_cached_pull_files(pull_number)
-
-    if not cached:
-        page = 1
-        while True:
-            batch = crawler.list_pull_files(
-                pull_number,
-                per_page=per_page,
-                page=page,
-            )
-            if not batch:
-                break
-            pr_files.extend(batch)
-            if len(batch) < per_page:
-                break
-            page += 1
-            time.sleep(API_CALL_DELAY)
-
-    return list(filter(None, [f.get("filename") for f in pr_files]))
 
 
-def collect_labels(pr: dict) -> list[str]:
-    return list(filter(None, [l.get("name") for l in pr.get("labels", [])]))
 
 
 def summarize_pulls(
@@ -409,11 +457,39 @@ def summarize_pulls(
         closed_at: str | None = pr.get("closed_at")
         merged_at: str | None = pr.get("merged_at")
         labels: list[str] = collect_labels(pr)
+
+        def _get_branch_name_and_login(pr: dict, where: str):
+            """
+            Get head/base branch name and login
+            """
+            if where != "head" and where != "base":
+                raise ValueError(
+                    "Pull request only consider head branch or base branch."
+                )
+            b = pr.get(where, None)
+            if b is None:
+                raise ValueError(f"Branch {where} is None. Double check it.")
+            name = b.get("label")
+            if name is None:
+                raise ValueError(f"Branch {where}.label is None. Double check it.")
+            user = b.get("user")
+            if user is None:
+                raise ValueError(f"Branch {where}.user is None. Double check it.")
+            login = user.get("login")
+            if login is None:
+                raise ValueError(f"Branch {where}.user.login is None. Double check it.")
+            return {
+                f"{where}_name": name,
+                f"{where}_login": login,
+            }
+
+        head_detail: dict[str, str] = _get_branch_name_and_login(pr, "head")
+        base_detail: dict[str, str] = _get_branch_name_and_login(pr, "base")
         # Call other APIs
+        pr_detail: dict = collect_get_pr_detail(crawler, pull_number)
         files_changed: list[str] = collect_files_changed(crawler, pull_number)
         time.sleep(API_CALL_DELAY)
         issue_comments_detail = collect_issue_comments(crawler, pull_number)
-        # TODO collect review comments and other relevant things
         review_comments_detail = collect_review_comments(crawler, pull_number)
 
         # Must Including FLINK-XXXX
@@ -455,6 +531,9 @@ def summarize_pulls(
             #     "review_comments_bytes", 0
             # ),
         }
+        new_row |= head_detail
+        new_row |= base_detail
+        new_row |= pr_detail
         new_row |= issue_comments_detail
         new_row |= review_comments_detail
         new_row["tool_total_comments_count"] = (
@@ -478,8 +557,6 @@ def summarize_pulls(
             # In manual bug list
             if force_update:
                 # force update local cache (final write)
-                # row.clear()
-                # row.update(new_row)
                 _update_merge_append(
                     mode="update",
                     visited_merged=rows_visited_merged,
