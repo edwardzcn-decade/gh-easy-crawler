@@ -22,7 +22,7 @@ GITHUB_REPO_OWNER = "apache"
 GITHUB_REPO_NAME = "flink-cdc"
 OUTPUT_DIR = "cdc_output"
 START_TIMESTAMP = datetime(2024, 3, 5, 0, 0, 0, tzinfo=timezone.utc)
-TITLE_PATTERN = re.compile(r"\[[A-Z]+-\d+\]")
+TITLE_PATTERN = re.compile(r"FLINK-\d{5}")
 API_CALL_DELAY = 0.5  # seconds
 METRIC_HEADERS = [
     "bug_id",
@@ -127,7 +127,7 @@ def filter_pulls(raw_pulls: list[dict]) -> list[dict]:
         return created_at >= START_TIMESTAMP
 
     def _matches_title_in_bug_ids(pr: dict, bug_ids: list) -> bool:
-        match = TITLE_PATTERN.search(pr["title"])
+        match = TITLE_PATTERN.search(pr.get("title") or "")
         if match is None:
             return False
         bug_id = match.group(0)

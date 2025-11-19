@@ -7,6 +7,7 @@ bin/
 lib/
 include/
 output/
+plot/
 *_output/
 /tests/__pycache__
 /core/__pycache__
