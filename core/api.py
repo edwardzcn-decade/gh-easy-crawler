@@ -449,11 +449,381 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return success
 
-    ## TODO Github-hosted runners
-    ## Link: https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28
+    ## GitHub-Hosted runners
+    def list_org_hosted_runners(
+        self, org: str | None = None, per_page: int = 30, page: int = 1
+    ) -> dict[str, Any]:
+        """
+        List GitHub-hosted runners for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#list-github-hosted-runners-for-an-organization
+        """
+        # default org_name is the repo_owner e.g. apache
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners"
+        params = {"per_page": per_page, "page": page}
+        resp = self._get_request(url, params=params)
+        data = resp.json()
+        total = data.get("total_count", 0)
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runners_page_{page}.json",
+            level="log",
+            post_msg=f"Fetched {total} hosted-runners for org {org_name}.",
+        )
+        return data
 
-    ## TODO OIDC
-    ## Link: https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28
+    def create_org_hosted_runner(
+        self,
+        name: str,
+        image: dict[str, Any],
+        size: str,
+        runner_group_id: int,
+        org: str | None = None,
+        maximum_runners: int | None = None,
+        enable_static_ip: bool | None = None,
+        image_gen: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a GitHub-hosted runner for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#create-a-github-hosted-runner-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners"
+        payload: dict[str, Any] = {
+            "name": name,
+            "image": image,
+            "size": size,
+            "runner_group_id": runner_group_id,
+        }
+        if maximum_runners is not None:
+            payload["maximum_runners"] = maximum_runners
+        if enable_static_ip is not None:
+            payload["enable_static_ip"] = enable_static_ip
+        if image_gen is not None:
+            payload["image_gen"] = image_gen
+        resp = self._post_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_created.json",
+            level="log",
+            post_msg=f"Created hosted-runner '{name}' in org {org_name}.",
+        )
+        return data
+
+    def list_org_hosted_runner_custom_images(self, org: str | None = None) -> dict[str, Any]:
+        """
+        List custom images for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#list-custom-images-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom"
+        resp = self._get_request(url)
+        data = resp.json()
+        total = data.get("total_count", 0)
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_custom_images.json",
+            level="log",
+            post_msg=f"Fetched {total} hosted-runner custom images for org {org_name}.",
+        )
+        return data
+
+    def get_org_hosted_runner_custom_image(
+        self, image_definition_id: str, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get a custom image definition for GitHub Actions hosted runners.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-a-custom-image-definition-for-github-actions-hosted-runners
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}.json",
+            level="log",
+            post_msg=f"Fetched hosted-runner custom image {image_definition_id} for org {org_name}.",
+        )
+        return data
+
+    def delete_org_hosted_runner_custom_image(
+        self, image_definition_id: str, org: str | None = None
+    ) -> bool:
+        """
+        Delete a custom image from the organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#delete-a-custom-image-from-the-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}"
+        resp = self._delete_request(url)
+        success = 200 <= resp.status_code < 300
+        self._persist(
+            {
+                "image_definition_id": image_definition_id,
+                "status_code": resp.status_code,
+                "success": success,
+            },
+            filename=f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_deleted.json",
+            level="log",
+            post_msg=f"Deleted hosted-runner custom image {image_definition_id} for org {org_name}.",
+        )
+        return success
+
+    def list_org_hosted_runner_custom_image_versions(
+        self, image_definition_id: str, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        List image versions of a custom image for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#list-image-versions-of-a-custom-image-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = (
+            f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions"
+        )
+        resp = self._get_request(url)
+        data = resp.json()
+        total = data.get("total_count", 0)
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_versions.json",
+            level="log",
+            post_msg=(
+                f"Fetched {total} hosted-runner custom image {image_definition_id} versions for org {org_name}."
+            ),
+        )
+        return data
+
+    def get_org_hosted_runner_custom_image_version(
+        self, image_definition_id: str, version: str, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get an image version of a custom image for GitHub Actions hosted runners.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-an-image-version-of-a-custom-image-for-github-actions-hosted-runners
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions/{version}"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=(
+                f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_version_{version}.json"
+            ),
+            level="log",
+            post_msg=(
+                f"Fetched hosted runner custom image {image_definition_id} version {version} for org {org_name}."
+            ),
+        )
+        return data
+
+    def delete_org_hosted_runner_custom_image_version(
+        self, image_definition_id: str, version: str, org: str | None = None
+    ) -> bool:
+        """
+        Delete an image version of a custom image from the organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#delete-an-image-version-of-custom-image-from-the-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions/{version}"
+        resp = self._delete_request(url)
+        success = 200 <= resp.status_code < 300
+        self._persist(
+            {
+                "image_definition_id": image_definition_id,
+                "version": version,
+                "status_code": resp.status_code,
+                "success": success,
+            },
+            filename=(
+                f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_version_{version}_deleted.json"
+            ),
+            level="log",
+            post_msg=(
+                f"Deleted hosted runner custom image {image_definition_id} version {version} for org {org_name}."
+            ),
+        )
+        return success
+
+    def list_org_hosted_runner_github_owned_images(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get the list of GitHub-owned images for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-github-owned-images-for-github-hosted-runners-in-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/github-owned"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_github_owned_images.json",
+            level="log",
+            post_msg=f"Fetched GitHub-owned hosted runner images for org {org_name}.",
+        )
+        return data
+
+    def list_org_hosted_runner_partner_images(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get the list of partner images for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-partner-images-for-github-hosted-runners-in-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/partner"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_partner_images.json",
+            level="log",
+            post_msg=f"Fetched partner hosted runner images for org {org_name}.",
+        )
+        return data
+
+    def get_org_hosted_runner_limits(self, org: str | None = None) -> dict[str, Any]:
+        """
+        Get limits on GitHub-hosted runners for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-limits-on-github-hosted-runners-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/limits"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_limits.json",
+            level="log",
+            post_msg=f"Fetched hosted runner limits for org {org_name}.",
+        )
+        return data
+
+    def get_org_hosted_runner_machine_sizes(self, org: str | None = None) -> dict[str, Any]:
+        """
+        Get machine sizes for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-github-hosted-runners-machine-specs-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/machine-sizes"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_machine_sizes.json",
+            level="log",
+            post_msg=f"Fetched hosted runner machine sizes for org {org_name}.",
+        )
+        return data
+
+    def list_org_hosted_runner_platforms(self, org: str | None = None) -> dict[str, Any]:
+        """
+        Get the list of platforms for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-platforms-for-github-hosted-runners-in-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/platforms"
+        resp = self._get_request(url)
+        data = resp.json()
+        total = data.get("total_count", 0)
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_platforms.json",
+            level="log",
+            post_msg=f"Fetched {total} hosted runner platforms for org {org_name}.",
+        )
+        return data
+
+    def get_org_hosted_runner(
+        self, hosted_runner_id: int, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get a GitHub-hosted runner for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-a-github-hosted-runner-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/{hosted_runner_id}"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_{hosted_runner_id}.json",
+            level="log",
+            post_msg=f"Fetched hosted runner #{hosted_runner_id} for org {org_name}.",
+        )
+        return data
+
+    def update_org_hosted_runner(
+        self,
+        hosted_runner_id: int,
+        org: str | None = None,
+        name: str | None = None,
+        maximum_runners: int | None = None,
+        enable_static_ip: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update a GitHub-hosted runner for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#update-a-github-hosted-runner-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/{hosted_runner_id}"
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if maximum_runners is not None:
+            payload["maximum_runners"] = maximum_runners
+        if enable_static_ip is not None:
+            payload["enable_static_ip"] = enable_static_ip
+        if not payload:
+            raise ValueError("At least one field must be provided to update a hosted runner.")
+        resp = self._patch_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_{hosted_runner_id}_updated.json",
+            level="log",
+            post_msg=f"Updated hosted runner #{hosted_runner_id} for org {org_name}.",
+        )
+        return data
+
+    def delete_org_hosted_runner(
+        self, hosted_runner_id: int, org: str | None = None
+    ) -> bool:
+        """
+        Delete a GitHub-hosted runner for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#delete-a-github-hosted-runner-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/{hosted_runner_id}"
+        resp = self._delete_request(url)
+        success = 200 <= resp.status_code < 300
+        # With body
+        data = resp.json() if resp.content else {}
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_{hosted_runner_id}_deleted.json",
+            level="log",
+            post_msg=f"Deleted hosted runner #{hosted_runner_id} for org {org_name}, result {success}.",
+        )
+        return success
 
     ## TODO Permissions
     ## Link: https://docs.github.com/en/rest/actions/permissions?apiVersion=2022-11-28
