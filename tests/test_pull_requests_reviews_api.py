@@ -55,15 +55,16 @@ def crawler() -> GitHubRESTCrawler:
 @pytest.fixture(scope="module", autouse=True)
 def prepare_environment():
     """Ensure review artifacts are cleaned up before/after tests."""
-    # _cleanup_output_artifacts()
+    _cleanup_output_artifacts()
     yield
-    # _cleanup_output_artifacts()
+    _cleanup_output_artifacts()
 
 
 @pytest.fixture(scope="module")
 def sample_pull(crawler: GitHubRESTCrawler) -> dict:
     pulls = crawler.list_repo_pulls(state="open", per_page=30, page=1)
     if not pulls:
+        print("⚠️ TEST WARNING: Test repository has no open pull requests. Some tests may skip.")
         pytest.skip("Test repository has no open pull requests to inspect.")
     return pulls[0]
 
