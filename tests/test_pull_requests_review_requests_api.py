@@ -60,6 +60,7 @@ def prepare_environment():
 def sample_pull(crawler: GitHubRESTCrawler) -> dict:
     pulls = crawler.list_repo_pulls(state="open", per_page=30, page=1)
     if not pulls:
+        print("⚠️ TEST WARNING: Test repository has no open pull requests. Some tests may skip.")
         pytest.skip("Test repository has no open pull requests to inspect.")
     return pulls[0]
 
@@ -104,10 +105,13 @@ def test_request_and_remove_pull_reviewers(
         )
         assert added_output.exists()
         assert "requested_reviewers" in added
-    except HTTPError as e_422:
+    except HTTPError as http_error:
         # Response Status Code: 422
+        assert http_error.response.status_code == 422
+        error_data = http_error.response.json()
+        error_msg= error_data.get("message", "")
         # Response Content: {"message":"Review cannot be requested from pull request author.", ...}
-        print(e_422.strerror)
+        assert error_msg == "Review cannot be requested from pull request author."
     finally:
         if cleanup_required:
             removed = crawler.remove_pull_reviewers(

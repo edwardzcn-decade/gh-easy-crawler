@@ -16,7 +16,7 @@ from core.config import OUTPUT_DIR_TEST, get_github_token_test
 
 TEST_REPO_OWNER = "edwardzcn-decade"
 TEST_REPO_NAME = "gh-easy-crawler"
-# TEST_PULL_REQUEST_HEAD = "v0.3.1"
+# TEST_PULL_REQUEST_HEAD = "v0.4.1"
 # TEST_PULL_REQUEST_BASE = "main"
 
 
@@ -62,21 +62,21 @@ def prepare_environment():
 
 
 @pytest.fixture(scope="module")
-def first_sample_pull(crawler: GitHubRESTCrawler) -> dict:
-    # Try fetch open pull
+def special_pull(crawler: GitHubRESTCrawler) -> dict:
+    # Fetch special pulll
     pulls = crawler.list_repo_pulls(state="all", per_page=30, page=1)
     if not pulls:
         pulls = crawler.list_repo_pulls(state="all", per_page=30, page=1)
     if not pulls:
         pytest.skip("Test repository has no pull requests to inspect.")
-    return pulls[0]
+    return pulls[-13]
 
 
 @pytest.fixture
 def review_comment_context(
-    crawler: GitHubRESTCrawler, first_sample_pull: dict
+    crawler: GitHubRESTCrawler, special_pull: dict
 ) -> dict[str, str | int]:
-    pull_number = first_sample_pull["number"]
+    pull_number = special_pull["number"]
     commits = crawler.list_pull_commits(pull_number, per_page=1, page=1)
     files = crawler.list_pull_files(pull_number, per_page=1, page=1)
     if not commits or not files:
@@ -95,9 +95,9 @@ def test_list_repo_pull_review_comments_not_empty(crawler: GitHubRESTCrawler):
 
 
 def test_list_pull_review_comments_not_empty(
-    crawler: GitHubRESTCrawler, first_sample_pull: dict
+    crawler: GitHubRESTCrawler, special_pull: dict
 ):
-    pull_number = first_sample_pull["number"]
+    pull_number = special_pull["number"]
     output_path = (
         Path(OUTPUT_DIR_TEST)
         / f"pull_{pull_number}_review_comments_None_page_1.json"
@@ -120,14 +120,19 @@ def test_review_comment_lifecycle_left_one(
     path = review_comment_context["path"]
     base_body = f"[UT][REST] Review comment {uuid4()}"
 
-    created = crawler.create_pull_review_comment(
-        pull_number=pull_number,
-        body=base_body,
-        commit_id=commit_id,
-        path=path,
-        line=1,
-        side="RIGHT",
-    )
+    # Will receive error message for a resolved pr.
+    # status code 422 and the errors[0].message == "could not be resolved"
+    try:
+        created = crawler.create_pull_review_comment(
+            pull_number=pull_number,
+            body=base_body,
+            commit_id=commit_id,
+            path=path,
+            line=1,
+            side="RIGHT",
+        )
+    except Exception as e:
+        assert 
     comment_id = created["id"]
     created_output = (
         Path(OUTPUT_DIR_TEST)
