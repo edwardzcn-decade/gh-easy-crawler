@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from uuid import uuid4
-from datetime import datetime,timezone
+from datetime import datetime, timezone
 
 import pytest
 from requests import HTTPError
@@ -25,7 +25,7 @@ from core.config import (
 
 # For create pr only
 # The name of the branch where your changes are implemented.
-TEST_PULL_REQUEST_HEAD = "v0.3.1"
+TEST_PULL_REQUEST_HEAD = "v0.4.1"
 # The name of the branch where your changes are pulled into. e.g. main/master
 TEST_PULL_REQUEST_BASE = "main"
 
@@ -73,11 +73,26 @@ def prepare_environment():
 
 
 @pytest.fixture(scope="module")
-def sample_pull(crawler: GitHubRESTCrawler) -> dict:
-    pulls = crawler.list_repo_pulls(state="all", per_page=30, page=1)
-    if not pulls:
+def sample_pulls(crawler: GitHubRESTCrawler) -> list[dict]:
+    pulls = crawler.list_repo_pulls(state="all", per_page=50, page=1)
+    if pulls == []:
         pytest.skip("Test repository has no pull requests to inspect.")
-    return pulls[0]
+    return pulls
+
+
+@pytest.fixture(scope="module")
+def first_sample_pull(sample_pulls: list[dict]) -> dict:
+    return sample_pulls[0]
+
+
+@pytest.fixture(scope="module")
+def merged_special_pull(sample_pulls: list[dict]) -> dict:
+    return sample_pulls[-13]
+
+
+@pytest.fixture(scope="module")
+def closed_special_pull(sample_pulls: list[dict]) -> dict:
+    return sample_pulls[-12]
 
 
 def test_list_repo_pulls_creates_output(crawler: GitHubRESTCrawler):
@@ -86,14 +101,16 @@ def test_list_repo_pulls_creates_output(crawler: GitHubRESTCrawler):
     if output_path.exists():
         output_path.unlink()
 
-    pulls = crawler.list_repo_pulls(state="all", per_page=30, page=1,output_filename=test_filename)
+    pulls = crawler.list_repo_pulls(
+        state="all", per_page=30, page=1, output_filename=test_filename
+    )
 
     assert isinstance(pulls, list)
     assert output_path.exists()
 
 
-def test_get_pull_matches_listing(crawler: GitHubRESTCrawler, sample_pull: dict):
-    pull_number = sample_pull["number"]
+def test_get_pull_matches_listing(crawler: GitHubRESTCrawler, first_sample_pull: dict):
+    pull_number = first_sample_pull["number"]
     output_path = Path(OUTPUT_DIR_TEST) / f"pull_{pull_number}.json"
     if output_path.exists():
         output_path.unlink()
@@ -101,12 +118,14 @@ def test_get_pull_matches_listing(crawler: GitHubRESTCrawler, sample_pull: dict)
     fetched = crawler.get_pull(pull_number)
 
     assert fetched["number"] == pull_number
-    assert fetched["title"] == sample_pull["title"]
+    assert fetched["title"] == first_sample_pull["title"]
     assert output_path.exists()
 
 
-def test_list_pull_commits_and_files(crawler: GitHubRESTCrawler, sample_pull: dict):
-    pull_number = sample_pull["number"]
+def test_list_pull_commits_and_files(
+    crawler: GitHubRESTCrawler, merged_special_pull: dict
+):
+    pull_number = merged_special_pull["number"]
     commits_path = Path(OUTPUT_DIR_TEST) / f"pull_{pull_number}_commits_page_1.json"
     files_path = Path(OUTPUT_DIR_TEST) / f"pull_{pull_number}_files_page_1.json"
     for candidate in (commits_path, files_path):
@@ -122,13 +141,39 @@ def test_list_pull_commits_and_files(crawler: GitHubRESTCrawler, sample_pull: di
     assert files_path.exists()
 
 
-def test_is_pull_merged_reflects_status(crawler: GitHubRESTCrawler, sample_pull: dict):
-    pull_number = sample_pull["number"]
-    merged_flag = bool(sample_pull.get("merged_at"))
-
+def test_is_pull_merged(crawler: GitHubRESTCrawler, merged_special_pull: dict):
+    pull_number = merged_special_pull["number"]
+    merged_flag = bool(merged_special_pull.get("merged_at"))
     if merged_flag:
+        # Double check use another API
         assert crawler.is_pull_merged(pull_number) is True
     else:
+        print("⚠️ TEST WARNING: merged_special_pull's merged_flag is False!")
+        # Double check use another API
+        try:
+            # Unmerged pr should trigger HTTPError
+            assert crawler.is_pull_merged(pull_number) is True
+        except HTTPError as http_err:
+            # Unmerged pr should get status code 404
+            assert http_err.response.status_code == 404
+            assert False
+
+
+def test_is_pull_not_merged(crawler: GitHubRESTCrawler, closed_special_pull: dict):
+    pull_number = closed_special_pull["number"]
+    merged_flag = bool(closed_special_pull.get("merged_at"))
+    if merged_flag:
+        print("⚠️ TEST WARNING: closed_special_pull's merged_flag is True.")
+        # Double check use another API
+        try:
+            assert crawler.is_pull_merged(pull_number) is False
+        except HTTPError as http_err:
+            assert http_err.response.status_code == 404
+            assert True
+    else:
+        # Double check use another API
+        # /merge endpoint API will return 404 if pull request has not been merged
+        # and trigger HTTPError
         with pytest.raises(HTTPError):
             crawler.is_pull_merged(pull_number)
 
@@ -152,7 +197,6 @@ def test_create_update_close_pull_request(
     title_postfix = f"{title_time}"
     title = f"{title_prefix} Automated create and close pull request {title_postfix}"
     body = "Automated test pull request generated by test suite."
-
     created = crawler.create_pull(
         title=title,
         head=head,
@@ -180,9 +224,6 @@ def test_create_update_close_pull_request(
     updated_output = Path(OUTPUT_DIR_TEST) / f"pull_{pull_number}_updated.json"
     assert updated_output.exists()
 
-    readed = crawler.get_pull(
-        pull_number=pull_number
-    )
+    readed = crawler.get_pull(pull_number=pull_number)
     assert readed["title"] == updated_title
     assert readed["state"] == "closed"
-

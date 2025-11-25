@@ -9,6 +9,7 @@ Authors: edwardzcn
 """
 
 import requests
+from requests.exceptions import HTTPError, ConnectTimeout
 from pathlib import Path
 from typing import Any
 from .base import GitHubCrawlerBase
@@ -151,9 +152,29 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 timeout=timeout,
             )
             resp.raise_for_status()
+        except HTTPError as http_err:
+            print(f"❌ HTTP error during {method.upper()} request → {url}")
+            print(f"❌ HTTP error reason: {http_err}")
+            resp = http_err.response
+            if resp is not None:
+                print(f"❌ HTTP error with response:")
+                print(f"Response Status Code: {resp.status_code}")
+                print(f"Response Content: {resp.text[:200]}")
+            else :
+                print(f"❌ HTTP error without response.")
+            raise
+        except ConnectTimeout as connect_timeout_err:
+            # TODO be safe to retry.
+            print(f"❌ ConnectTimeout error during {method.upper()} request → {url}")
+            print(f"❌ ConnectTimeout error reason: {connect_timeout_err}")
+            resp = connect_timeout_err.response
+            if resp is not None:
+                print(f"Response Status Code: {resp.status_code}")
+                print(f"Response Content: {resp.text[:200]}")
+            raise
         except Exception as e:
-            print(f"❌ Error during {method.upper()} request → {url}")
-            print(f"Reason: {e}")
+            print(f"❌ Other exception during {method.upper()} request → {url}")
+            print(f"❌ Other exception reason: {e}")
             if resp is not None:
                 print(f"Response Status Code: {resp.status_code}")
                 print(f"Response Content: {resp.text[:200]}")
@@ -824,6 +845,98 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             post_msg=f"Deleted hosted runner #{hosted_runner_id} for org {org_name}, result {success}.",
         )
         return success
+
+    ## OIDC
+    def get_org_oidc_customization_sub(self, org: str | None = None) -> dict[str, Any]:
+        """
+        Get the customization template for an OIDC subject claim for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#get-the-customization-template-for-an-oidc-subject-claim-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/oidc/customization/sub"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_oidc_customization_sub.json",
+            level="log",
+            post_msg=f"Fetched OIDC subject customization for org {org_name}.",
+        )
+        return data
+
+    def set_org_oidc_customization_sub(
+        self,
+        use_default: bool,
+        subject_claim_template: str | None = None,
+        org: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Set the customization template for an OIDC subject claim for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#set-the-customization-template-for-an-oidc-subject-claim-for-an-organization
+        """
+        if not use_default and subject_claim_template is None:
+            raise ValueError("subject_claim_template is required when use_default is False.")
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/oidc/customization/sub"
+        payload: dict[str, Any] = {"use_default": use_default}
+        if subject_claim_template is not None:
+            payload["subject_claim_template"] = subject_claim_template
+        resp = self._put_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_oidc_customization_sub_set.json",
+            level="log",
+            post_msg=f"Updated OIDC subject customization for org {org_name}.",
+        )
+        return data
+
+    def get_repo_oidc_customization_sub(self) -> dict[str, Any]:
+        """
+        Get the customization template for an OIDC subject claim for a repository.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#get-the-customization-template-for-an-oidc-subject-claim-for-a-repository
+        """
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/actions/oidc/customization/sub"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename="repo_oidc_customization_sub.json",
+            level="log",
+            post_msg=(
+                f"Fetched OIDC subject customization for repo {self.repo_owner}/{self.repo_name}."
+            ),
+        )
+        return data
+
+    def set_repo_oidc_customization_sub(
+        self, use_default: bool, subject_claim_template: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Set the customization template for an OIDC subject claim for a repository.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#set-the-customization-template-for-an-oidc-subject-claim-for-a-repository
+        """
+        if not use_default and subject_claim_template is None:
+            raise ValueError("subject_claim_template is required when use_default is False.")
+        url = f"/repos/{self.repo_owner}/{self.repo_name}/actions/oidc/customization/sub"
+        payload: dict[str, Any] = {"use_default": use_default}
+        if subject_claim_template is not None:
+            payload["subject_claim_template"] = subject_claim_template
+        resp = self._put_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename="repo_oidc_customization_sub_set.json",
+            level="log",
+            post_msg=(
+                f"Updated OIDC subject customization for repo {self.repo_owner}/{self.repo_name}."
+            ),
+        )
+        return data
 
     ## TODO Permissions
     ## Link: https://docs.github.com/en/rest/actions/permissions?apiVersion=2022-11-28
