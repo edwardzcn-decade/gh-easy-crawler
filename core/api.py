@@ -2332,7 +2332,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     # User
     def get_authenticated_user(self) -> dict[str, Any]:
         """
-        Get the currently authenticated user's information.
+        Get the currently authenticated user's profile.
         GitHub Docs:
         https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-the-authenticated-user
         """
@@ -2342,7 +2342,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         # get user_login and user_id
         user_login = data.get("login", "UNKNOWN")
         user_id = data.get("id", "UNKNOWN")
-        # save to auth_user_{id}_{login}.json
         self._persist(
             data,
             filename=f"auth_user_{user_id}_{user_login}.json",
@@ -2351,24 +2350,117 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return data
 
-    def get_user_with_username(self, username: str) -> dict[str, Any]:
+    def update_authenticated_user(
+        self,
+        name: str | None,
+        email: str | None,
+        blog: str | None,
+        twitter_username: str | None,
+        company: str | None,
+        location: str | None,
+        hireable: bool | None,
+        bio: str | None,
+    ) -> dict[str, Any]:
         """
-        Get a user's public information with their username.
+        Update the authenticated user's profile
+        Note: the changed `email` will not be desplayed on the public profile if your proivacy settings are still enforced.
         GitHub Docs:
-        https://docs.github.com/zh/rest/users/users?apiVersion=2022-11-28#get-a-user-using-their-id
+        https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#update-the-authenticated-user
         """
-        # TODO: check if username is valid
-        url = f"/user/{username}"
+        url = "/user"
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if email is not None:
+            payload["email"] = email
+        if blog is not None:
+            payload["blog"] = blog
+        if twitter_username is not None:
+            payload["twitter_username"] = twitter_username
+        if company is not None:
+            payload["company"] = company
+        if location is not None:
+            payload["location"] = location
+        if hireable is not None:
+            payload["hireable"] = hireable
+        resp = self._patch_request(url, payload=payload)
+        data = resp.json()
+        # get user_login and user_id
+        user_login = data.get("login", "UNKNOWN")
+        user_id = data.get("id", "UNKNOWN")
+        self._persist(
+            data,
+            filename=f"auth_user_{user_id}_{user_login}_updated.json",
+            level="log",
+            post_msg=f"Updated authenticated user info.",
+        )
+        return data
+
+    def get_user_with_userid(self, userid: str) -> dict[str, Any]:
+        """
+        Get someone's public information with their user id.
+        GitHub Docs:
+        https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-a-user-using-their-id
+        """
+        url = f"/user/{userid}"
         resp = self._get_request(url)
         data = resp.json()
         # get user_login and user_id
         user_login = data.get("login", "UNKNOWN")
         user_id = data.get("id", "UNKNOWN")
-        # save to user_{username}_{id}.json
+        user_login = data.get("login", "UNKNOWN")
         self._persist(
             data,
-            filename=f"user_{user_id}_{user_login}.json",
+            filename=f"user_{user_id}_{user_login}_by_userid.json",
+            level="log",
+            post_msg=f"Fetched user info for {user_id}",
+        )
+
+    def list_users(
+        self,
+        since: int | None,
+        per_page: int = 30,
+    ) -> list[dict[str, Any]]:
+        """
+        List all users in the order they signed up including personal user accounts and organization accounts.
+        GitHub Docs:
+        https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#list-users
+        """
+        url = "/users"
+        params: dict[str, Any] = {"per_page": per_page}
+        if since is not None:
+            params["since"] = since
+        resp = self._get_request(url, params=params)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"users.json",
+            level="log",
+            post_msg=f"Fetched {len(data)} users.",
+        )
+        return data
+
+    def get_user_with_username(self, username: str) -> dict[str, Any]:
+        """
+        Get someone's public information with their username.
+        Note:
+        If you are requesting information about an Enterprise Managed User, or a GitHub App bot that is installed in an organization that uses Enterprise Managed Users, you must be authenticate.
+        GitHub Docs:
+        https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-a-user
+        """
+        url = f"/users/{username}"
+        resp = self._get_request(url)
+        data = resp.json()
+        # get user_login and user_id
+        user_login = data.get("login", "UNKNOWN")
+        user_id = data.get("id", "UNKNOWN")
+        self._persist(
+            data,
+            filename=f"user_{user_id}_{user_login}_by_username.json",
             level="log",
             post_msg=f"Fetched user info for {username}.",
         )
         return data
+
+    # TODO add get_user_contextual
+    # https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-contextual-information-for-a-user
