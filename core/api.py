@@ -8,13 +8,23 @@ Implements various common APIs for REST API and gh CLI based crawlers.
 Authors: edwardzcn
 """
 
+import logging
 import requests
+
+# from requests.exceptions import HTTPError, ConnectTimeout
+from requests import RequestException
 from requests.exceptions import HTTPError, ConnectTimeout
 from pathlib import Path
 from typing import Any
 from .base import GitHubCrawlerBase
 from .config import SupportMediaTypes
-
+from .exceptions import (
+    GitHubException,
+    GitHubHTTPError,
+    TransportError,
+    error_from_response,
+)
+logger = logging.getLogger(__name__)
 
 class GitHubRESTCrawler(GitHubCrawlerBase):
     """GitHub REST API implementation of GitHubCrawlerBase"""
@@ -130,7 +140,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         :param timeout: Optional timeout setting for the request in seconds.
                         Can be a float or a tuple (connect timeout, read timeout).
         :return: The `requests.Response` object resulting from the HTTP request.
-        :raises: Raises exceptions from `requests` if the request fails or returns an HTTP error status.
+        :raises: Raises `TransportError` or `GitHubHTTPError` from custom exceptions.
         """
         # Check if it is endpoint or full URL
         if not url.startswith("http"):
@@ -151,35 +161,49 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 json=json_payload,
                 timeout=timeout,
             )
-            resp.raise_for_status()
-        except HTTPError as http_err:
-            print(f"❌ HTTP error during {method.upper()} request → {url}")
-            print(f"❌ HTTP error reason: {http_err}")
-            resp = http_err.response
-            if resp is not None:
-                print(f"❌ HTTP error with response:")
-                print(f"Response Status Code: {resp.status_code}")
-                print(f"Response Content: {resp.text[:200]}")
-            else :
-                print(f"❌ HTTP error without response.")
-            raise
-        except ConnectTimeout as connect_timeout_err:
-            # TODO be safe to retry.
-            print(f"❌ ConnectTimeout error during {method.upper()} request → {url}")
-            print(f"❌ ConnectTimeout error reason: {connect_timeout_err}")
-            resp = connect_timeout_err.response
-            if resp is not None:
-                print(f"Response Status Code: {resp.status_code}")
-                print(f"Response Content: {resp.text[:200]}")
-            raise
-        except Exception as e:
-            print(f"❌ Other exception during {method.upper()} request → {url}")
-            print(f"❌ Other exception reason: {e}")
-            if resp is not None:
-                print(f"Response Status Code: {resp.status_code}")
-                print(f"Response Content: {resp.text[:200]}")
-            raise
-        return resp
+            # resp.raise_for_status()  # remove raise_for_status to use custom exceptions
+        # except HTTPError as http_err:
+        #     print(f"❌ HTTP error during {method.upper()} request → {url}")
+        #     print(f"❌ HTTP error reason: {http_err}")
+        #     resp = http_err.response
+        #     if resp is not None:
+        #         print(f"❌ HTTP error with response:")
+        #         print(f"Response Status Code: {resp.status_code}")
+        #         print(f"Response Content: {resp.text[:200]}")
+        #     else:
+        #         print(f"❌ HTTP error without response.")
+        #     raise
+        # except ConnectTimeout as connect_timeout_err:
+        #     # TODO be safe to retry.
+        #     print(f"❌ ConnectTimeout error during {method.upper()} request → {url}")
+        #     print(f"❌ ConnectTimeout error reason: {connect_timeout_err}")
+        #     resp = connect_timeout_err.response
+        #     if resp is not None:
+        #         print(f"Response Status Code: {resp.status_code}")
+        #         print(f"Response Content: {resp.text[:200]}")
+        #     raise
+        # except Exception as e:
+        #     print(f"❌ Other exception during {method.upper()} request → {url}")
+        #     print(f"❌ Other exception reason: {e}")
+        #     if resp is not None:
+        #         print(f"Response Status Code: {resp.status_code}")
+        #         print(f"Response Content: {resp.text[:200]}")
+        #     raise
+        except RequestException as exc:
+            logger.error("Transport error during %s %s: %r",
+                         method.upper(),
+                         url,
+                         exc)
+            raise TransportError(exc) from exc
+        if 200 <= resp.status_code < 300:
+            return resp
+        err = error_from_response(resp)
+        logger.error("GitHub HTTP error during %s %s: status=%s, text(partial)=%s",
+                     method.upper(),
+                     url,
+                     err.code,
+                     err.text[:200])
+        raise err
 
     # --------------------------------------------------------
     # REST API Endpoints
@@ -534,7 +558,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return data
 
-    def list_org_hosted_runner_custom_images(self, org: str | None = None) -> dict[str, Any]:
+    def list_org_hosted_runner_custom_images(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
         """
         List custom images for GitHub-hosted runners in an organization.
         GitHub Docs:
@@ -606,9 +632,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#list-image-versions-of-a-custom-image-for-an-organization
         """
         org_name = org or self.repo_owner
-        url = (
-            f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions"
-        )
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions"
         resp = self._get_request(url)
         data = resp.json()
         total = data.get("total_count", 0)
@@ -733,7 +757,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return data
 
-    def get_org_hosted_runner_machine_sizes(self, org: str | None = None) -> dict[str, Any]:
+    def get_org_hosted_runner_machine_sizes(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
         """
         Get machine sizes for GitHub-hosted runners in an organization.
         GitHub Docs:
@@ -751,7 +777,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return data
 
-    def list_org_hosted_runner_platforms(self, org: str | None = None) -> dict[str, Any]:
+    def list_org_hosted_runner_platforms(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
         """
         Get the list of platforms for GitHub-hosted runners in an organization.
         GitHub Docs:
@@ -813,7 +841,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         if enable_static_ip is not None:
             payload["enable_static_ip"] = enable_static_ip
         if not payload:
-            raise ValueError("At least one field must be provided to update a hosted runner.")
+            raise ValueError(
+                "At least one field must be provided to update a hosted runner."
+            )
         resp = self._patch_request(url, payload=payload)
         data = resp.json()
         self._persist(
@@ -877,7 +907,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#set-the-customization-template-for-an-oidc-subject-claim-for-an-organization
         """
         if not use_default and subject_claim_template is None:
-            raise ValueError("subject_claim_template is required when use_default is False.")
+            raise ValueError(
+                "subject_claim_template is required when use_default is False."
+            )
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/oidc/customization/sub"
         payload: dict[str, Any] = {"use_default": use_default}
@@ -899,7 +931,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         GitHub Docs:
         https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#get-the-customization-template-for-an-oidc-subject-claim-for-a-repository
         """
-        url = f"/repos/{self.repo_owner}/{self.repo_name}/actions/oidc/customization/sub"
+        url = (
+            f"/repos/{self.repo_owner}/{self.repo_name}/actions/oidc/customization/sub"
+        )
         resp = self._get_request(url)
         data = resp.json()
         self._persist(
@@ -921,8 +955,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#set-the-customization-template-for-an-oidc-subject-claim-for-a-repository
         """
         if not use_default and subject_claim_template is None:
-            raise ValueError("subject_claim_template is required when use_default is False.")
-        url = f"/repos/{self.repo_owner}/{self.repo_name}/actions/oidc/customization/sub"
+            raise ValueError(
+                "subject_claim_template is required when use_default is False."
+            )
+        url = (
+            f"/repos/{self.repo_owner}/{self.repo_name}/actions/oidc/customization/sub"
+        )
         payload: dict[str, Any] = {"use_default": use_default}
         if subject_claim_template is not None:
             payload["subject_claim_template"] = subject_claim_template
@@ -1357,7 +1395,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         if issue_number is not None:
             payload["issue"] = issue_number
         resp = self._post_request(url, payload=payload)
-        resp.raise_for_status()
         data = resp.json()
         # Check use `id` or `number`
         new_pull_number = data.get("number", "unknown")
@@ -2171,7 +2208,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         payload: dict[str, Any] = {"body": body}
         resp = self._post_request(url, payload=payload)
-        resp.raise_for_status()
         data = resp.json()
         new_comment_id = data.get("id", "unknown")
         self._persist(
@@ -2415,6 +2451,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             level="log",
             post_msg=f"Fetched user info for {user_id}",
         )
+        return data
 
     def list_users(
         self,
