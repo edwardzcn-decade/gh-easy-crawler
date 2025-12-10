@@ -10,23 +10,15 @@ Authors: edwardzcn
 
 import logging
 import requests
-
-# from requests.exceptions import HTTPError, ConnectTimeout
-from requests import RequestException
-from requests.exceptions import HTTPError, ConnectTimeout
 from pathlib import Path
 from typing import Any
-from .base import GitHubCrawlerBase
+from .model import GitHubCore
 from .config import SupportMediaTypes
-from .exceptions import (
-    GitHubException,
-    GitHubHTTPError,
-    TransportError,
-    error_from_response,
-)
+
 logger = logging.getLogger(__name__)
 
-class GitHubRESTCrawler(GitHubCrawlerBase):
+
+class GitHubRESTCrawler(GitHubCore):
     """GitHub REST API implementation of GitHubCrawlerBase"""
 
     def __init__(
@@ -35,175 +27,9 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         repo: str | None = None,
         token: str | None = None,
         output_dir: str | None = None,
+        session: requests.Session | None = None,
     ):
-        super().__init__(owner, repo, token, output_dir)
-        # Build default headers
-        # TODO: Make media type configurable rather than default
-        self.headers = {
-            "Accept": SupportMediaTypes.DEFAULT.value,
-            "User-Agent": self._get_user_agent_default(),
-            "X-GitHub-Api-Version": self._get_api_version(),
-        }
-        if self.token:
-            self.headers["Authorization"] = f"token {self.token}"
-
-    # --------------------------------------------------------
-    # Abstract Method Implementation
-    # --------------------------------------------------------
-    def _get_request(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, Any] | None = None,
-        timeout: float | tuple[float, float] | None = None,
-    ):
-        return self._request(
-            "GET", url, headers, params=params, json_payload=None, timeout=timeout
-        )
-
-    def _post_request(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, Any] | None = None,
-        data: Any | None = None,
-        payload: Any | None = None,
-        timeout: float | tuple[float, float] | None = None,
-    ):
-        return self._request(
-            "POST",
-            url,
-            headers,
-            params=params,
-            raw_data=data,
-            json_payload=payload,
-            timeout=timeout,
-        )
-
-    def _patch_request(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, Any] | None = None,
-        payload: Any | None = None,
-        timeout: float | tuple[float, float] | None = None,
-    ):
-        return self._request(
-            "PATCH", url, headers, params=params, json_payload=payload, timeout=timeout
-        )
-
-    def _put_request(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, Any] | None = None,
-        payload: Any | None = None,
-        timeout: float | tuple[float, float] | None = None,
-    ):
-        return self._request(
-            "PUT", url, headers, params=params, json_payload=payload, timeout=timeout
-        )
-
-    def _delete_request(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, Any] | None = None,
-        payload: Any | None = None,
-        timeout: float | tuple[float, float] | None = None,
-    ):
-        return self._request(
-            "DELETE", url, headers, params=params, json_payload=payload, timeout=timeout
-        )
-
-    def _request(
-        self,
-        method: str,
-        url: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, Any] | None = None,
-        raw_data: Any | None = None,
-        json_payload: Any | None = None,
-        timeout: float | tuple[float, float] | None = None,
-    ):
-        """
-        Unified low-level HTTP request handler for REST API calls.
-        :param method: HTTP method to use (e.g., 'GET', 'POST', 'PATCH', 'PUT', 'DELETE').
-        :param url: Full URL or API endpoint path to send the request to.
-        :param headers: Optional dictionary of HTTP headers to include in the request.
-                        These headers override the default headers.
-        :param params: Optional dictionary to send as a list of params in the query string.
-        :param json_payload: Optional data to send in the request body as JSON.
-                        This maps to the `json` argument of `requests.request`.
-        :param raw_data: Optional raw data or bytes (e.g. for /markdown/raw)
-                        This maps to the `data` argument of `requests.request`
-        :param timeout: Optional timeout setting for the request in seconds.
-                        Can be a float or a tuple (connect timeout, read timeout).
-        :return: The `requests.Response` object resulting from the HTTP request.
-        :raises: Raises `TransportError` or `GitHubHTTPError` from custom exceptions.
-        """
-        # Check if it is endpoint or full URL
-        if not url.startswith("http"):
-            url = self._build_url(endpoint=url)
-        # Merge default headers with any provided ones.
-        # For Python <3.9, use: {**self.headers, **(headers or {})}
-        # For Python >=3.9, the dict union operator: self.headers | (headers or {}) is available.
-        # In both cases, keys from `headers` override those in `self.headers`.
-        request_headers = self.headers | (headers or {})
-        resp = None
-        try:
-            resp = requests.request(
-                method.upper(),
-                url=url,
-                headers=request_headers,
-                params=params,
-                data=raw_data,
-                json=json_payload,
-                timeout=timeout,
-            )
-            # resp.raise_for_status()  # remove raise_for_status to use custom exceptions
-        # except HTTPError as http_err:
-        #     print(f"❌ HTTP error during {method.upper()} request → {url}")
-        #     print(f"❌ HTTP error reason: {http_err}")
-        #     resp = http_err.response
-        #     if resp is not None:
-        #         print(f"❌ HTTP error with response:")
-        #         print(f"Response Status Code: {resp.status_code}")
-        #         print(f"Response Content: {resp.text[:200]}")
-        #     else:
-        #         print(f"❌ HTTP error without response.")
-        #     raise
-        # except ConnectTimeout as connect_timeout_err:
-        #     # TODO be safe to retry.
-        #     print(f"❌ ConnectTimeout error during {method.upper()} request → {url}")
-        #     print(f"❌ ConnectTimeout error reason: {connect_timeout_err}")
-        #     resp = connect_timeout_err.response
-        #     if resp is not None:
-        #         print(f"Response Status Code: {resp.status_code}")
-        #         print(f"Response Content: {resp.text[:200]}")
-        #     raise
-        # except Exception as e:
-        #     print(f"❌ Other exception during {method.upper()} request → {url}")
-        #     print(f"❌ Other exception reason: {e}")
-        #     if resp is not None:
-        #         print(f"Response Status Code: {resp.status_code}")
-        #         print(f"Response Content: {resp.text[:200]}")
-        #     raise
-        except RequestException as exc:
-            logger.error("Transport error during %s %s: %r",
-                         method.upper(),
-                         url,
-                         exc)
-            raise TransportError(exc) from exc
-        if 200 <= resp.status_code < 300:
-            return resp
-        err = error_from_response(resp)
-        logger.error("GitHub HTTP error during %s %s: status=%s, text(partial)=%s",
-                     method.upper(),
-                     url,
-                     err.code,
-                     err.text[:200])
-        raise err
+        super().__init__(owner, repo, token, output_dir, session=session)
 
     # --------------------------------------------------------
     # REST API Endpoints
@@ -225,13 +51,14 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         }
         if name is not None:
             params["name"] = name
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
+        total = data.get("total_count")
         self._persist(
             data,
             # TODO configurable repo owner, repo name
             filename="repo_artifacts.json",
-            level="log",
+            post_msg=f"Fetched {total} artifacts in repo:{self.repo_name}",
         )
         return data
 
@@ -244,12 +71,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         url = (
             f"/repos/{self.repo_owner}/{self.repo_name}/actions/artifacts/{artifact_id}"
         )
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"artifact_{artifact_id}.json",
-            level="log",
             post_msg=f"Fetched artifact #{artifact_id}",
         )
         return data
@@ -263,7 +89,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         url = (
             f"/repos/{self.repo_owner}/{self.repo_name}/actions/artifacts/{artifact_id}"
         )
-        resp = self._delete_request(url)
+        resp = self._delete(url)
         success = 200 <= resp.status_code < 300
         self._persist(
             {
@@ -272,7 +98,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 "success": success,
             },
             filename=f"artifact_{artifact_id}_deleted.json",
-            level="log",
             post_msg=f"Artifact #{artifact_id} deleted (status {resp.status_code}).",
         )
         return success
@@ -294,7 +119,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 "GitHub currently supports only the 'zip' archive format. Please set archive_format as 'zip'."
             )
         url = f"/repos/{self.repo_owner}/{self.repo_name}/actions/artifacts/{artifact_id}/{archive_format}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         target_path = (
             Path(output_path)
             if output_path is not None
@@ -312,7 +137,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 "bytes": written_bytes,
             },
             filename=f"artifact_{artifact_id}_{archive_format}_download.json",
-            level="log",
             post_msg=f"Artifact #{artifact_id} downloaded to {target_path} ({written_bytes} bytes).",
         )
         return target_path
@@ -334,13 +158,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         }
         if name is not None:
             params["name"] = name
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         artifacts_count = len(data.get("artifacts", []))
         self._persist(
             data,
             filename=f"workflow_run_{run_id}_artifacts.json",
-            level="log",
             post_msg=f"Fetched {artifacts_count} artifacts for workflow run #{run_id}.",
         )
         return data
@@ -355,13 +178,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         # default org_name is the repo_owner e.g. apache
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/cache/usage"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         usage_bytes = data.get("total_usage_in_bytes")
         self._persist(
             data,
             filename=f"org_{org_name}_cache_usage.json",
-            level="log",
             post_msg=f"Org {org_name} cache usage: {usage_bytes} bytes.",
         )
         return data
@@ -377,13 +199,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/cache/usage-by-repository"
         params = {"per_page": per_page, "page": page}
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         repo_count = len(data.get("repository_cache_usages", []))
         self._persist(
             data,
             filename=f"org_{org_name}_cache_usage_by_repo.json",
-            level="log",
             post_msg=f"Fetched cache usage for {repo_count} repositories in org {org_name}.",
         )
         return data
@@ -395,12 +216,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/actions/cache?apiVersion=2022-11-28#get-github-actions-cache-usage-for-a-repository
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/actions/cache/usage"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename="repo_cache_usage.json",
-            level="log",
             post_msg=(
                 f"Repo {self.repo_owner}/{self.repo_name} cache usage: "
                 f"{data.get('full_size_in_bytes')} bytes."
@@ -435,13 +255,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             params["sort"] = sort
             if direction is not None:
                 params["direction"] = direction
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         total_count = data.get("total_count", 0)
         self._persist(
             data,
             filename="repo_actions_caches.json",
-            level="log",
             post_msg=f"Fetched {total_count} caches for repo {self.repo_owner}/{self.repo_name}.",
         )
         return data
@@ -458,7 +277,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         params: dict[str, Any] = {"key": key}
         if ref is not None:
             params["ref"] = ref
-        resp = self._delete_request(url, params=params)
+        resp = self._delete(url, params=params)
         success = 200 <= resp.status_code < 300
         self._persist(
             {
@@ -468,7 +287,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 "success": success,
             },
             filename="repo_actions_cache_delete_by_key.json",
-            level="log",
             post_msg=f"Deleted cache with key={key} ref={ref}.",
         )
         return success
@@ -480,7 +298,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/actions/cache?apiVersion=2022-11-28#delete-a-github-actions-cache-for-a-repository-using-a-cache-id
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/actions/caches/{cache_id}"
-        resp = self._delete_request(url)
+        resp = self._delete(url)
         success = 200 <= resp.status_code < 300
         self._persist(
             {
@@ -489,7 +307,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 "success": success,
             },
             filename=f"repo_actions_cache_{cache_id}_deleted.json",
-            level="log",
             post_msg=f"Deleted cache #{cache_id}.",
         )
         return success
@@ -507,13 +324,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners"
         params = {"per_page": per_page, "page": page}
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         total = data.get("total_count", 0)
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runners_page_{page}.json",
-            level="log",
             post_msg=f"Fetched {total} hosted-runners for org {org_name}.",
         )
         return data
@@ -548,12 +364,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             payload["enable_static_ip"] = enable_static_ip
         if image_gen is not None:
             payload["image_gen"] = image_gen
-        resp = self._post_request(url, payload=payload)
+        resp = self._post(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_created.json",
-            level="log",
             post_msg=f"Created hosted-runner '{name}' in org {org_name}.",
         )
         return data
@@ -568,13 +383,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/images/custom"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         total = data.get("total_count", 0)
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_custom_images.json",
-            level="log",
             post_msg=f"Fetched {total} hosted-runner custom images for org {org_name}.",
         )
         return data
@@ -589,12 +403,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}.json",
-            level="log",
             post_msg=f"Fetched hosted-runner custom image {image_definition_id} for org {org_name}.",
         )
         return data
@@ -609,7 +422,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}"
-        resp = self._delete_request(url)
+        resp = self._delete(url)
         success = 200 <= resp.status_code < 300
         self._persist(
             {
@@ -618,7 +431,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 "success": success,
             },
             filename=f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_deleted.json",
-            level="log",
             post_msg=f"Deleted hosted-runner custom image {image_definition_id} for org {org_name}.",
         )
         return success
@@ -633,13 +445,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         total = data.get("total_count", 0)
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_versions.json",
-            level="log",
             post_msg=(
                 f"Fetched {total} hosted-runner custom image {image_definition_id} versions for org {org_name}."
             ),
@@ -656,14 +467,13 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions/{version}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=(
                 f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_version_{version}.json"
             ),
-            level="log",
             post_msg=(
                 f"Fetched hosted runner custom image {image_definition_id} version {version} for org {org_name}."
             ),
@@ -680,7 +490,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions/{version}"
-        resp = self._delete_request(url)
+        resp = self._delete(url)
         success = 200 <= resp.status_code < 300
         self._persist(
             {
@@ -692,7 +502,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             filename=(
                 f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_version_{version}_deleted.json"
             ),
-            level="log",
             post_msg=(
                 f"Deleted hosted runner custom image {image_definition_id} version {version} for org {org_name}."
             ),
@@ -709,12 +518,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/images/github-owned"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_github_owned_images.json",
-            level="log",
             post_msg=f"Fetched GitHub-owned hosted runner images for org {org_name}.",
         )
         return data
@@ -729,12 +537,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/images/partner"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_partner_images.json",
-            level="log",
             post_msg=f"Fetched partner hosted runner images for org {org_name}.",
         )
         return data
@@ -747,12 +554,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/limits"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_limits.json",
-            level="log",
             post_msg=f"Fetched hosted runner limits for org {org_name}.",
         )
         return data
@@ -767,12 +573,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/machine-sizes"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_machine_sizes.json",
-            level="log",
             post_msg=f"Fetched hosted runner machine sizes for org {org_name}.",
         )
         return data
@@ -787,13 +592,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/platforms"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         total = data.get("total_count", 0)
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_platforms.json",
-            level="log",
             post_msg=f"Fetched {total} hosted runner platforms for org {org_name}.",
         )
         return data
@@ -808,12 +612,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/{hosted_runner_id}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_{hosted_runner_id}.json",
-            level="log",
             post_msg=f"Fetched hosted runner #{hosted_runner_id} for org {org_name}.",
         )
         return data
@@ -844,12 +647,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             raise ValueError(
                 "At least one field must be provided to update a hosted runner."
             )
-        resp = self._patch_request(url, payload=payload)
+        resp = self._patch(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_{hosted_runner_id}_updated.json",
-            level="log",
             post_msg=f"Updated hosted runner #{hosted_runner_id} for org {org_name}.",
         )
         return data
@@ -864,14 +666,13 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/hosted-runners/{hosted_runner_id}"
-        resp = self._delete_request(url)
+        resp = self._delete(url)
         success = 200 <= resp.status_code < 300
         # With body
         data = resp.json() if resp.content else {}
         self._persist(
             data,
             filename=f"org_{org_name}_hosted_runner_{hosted_runner_id}_deleted.json",
-            level="log",
             post_msg=f"Deleted hosted runner #{hosted_runner_id} for org {org_name}, result {success}.",
         )
         return success
@@ -885,12 +686,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         org_name = org or self.repo_owner
         url = f"/orgs/{org_name}/actions/oidc/customization/sub"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_oidc_customization_sub.json",
-            level="log",
             post_msg=f"Fetched OIDC subject customization for org {org_name}.",
         )
         return data
@@ -915,12 +715,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         payload: dict[str, Any] = {"use_default": use_default}
         if subject_claim_template is not None:
             payload["subject_claim_template"] = subject_claim_template
-        resp = self._put_request(url, payload=payload)
+        resp = self._put(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"org_{org_name}_oidc_customization_sub_set.json",
-            level="log",
             post_msg=f"Updated OIDC subject customization for org {org_name}.",
         )
         return data
@@ -934,12 +733,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         url = (
             f"/repos/{self.repo_owner}/{self.repo_name}/actions/oidc/customization/sub"
         )
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename="repo_oidc_customization_sub.json",
-            level="log",
             post_msg=(
                 f"Fetched OIDC subject customization for repo {self.repo_owner}/{self.repo_name}."
             ),
@@ -964,12 +762,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         payload: dict[str, Any] = {"use_default": use_default}
         if subject_claim_template is not None:
             payload["subject_claim_template"] = subject_claim_template
-        resp = self._put_request(url, payload=payload)
+        resp = self._put(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename="repo_oidc_customization_sub_set.json",
-            level="log",
             post_msg=(
                 f"Updated OIDC subject customization for repo {self.repo_owner}/{self.repo_name}."
             ),
@@ -1040,13 +837,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#get-a-repository
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             # TODO configurable repo owner, repo name
             filename="repo_info.json",
-            level="log",
             post_msg="Repository: {self.repo_owner}/{self.repo_name}",
         )
         return data
@@ -1076,12 +872,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         }
         if label_list is not None:
             params["labels"] = ",".join(label_list)
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename="user_issues.json",
-            level="log",
             post_msg=f"Fetched {len(data)} issues (filter={filter}, state={state})",
         )
         return data
@@ -1153,17 +948,16 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             if direction is not None:
                 params["direction"] = direction
         elif direction is not None:
-            print("⚠️ Ignoring direction since sort is not specified.")
+            logger.warning("⚠️ Ignoring direction since sort is not specified.")
         if since is not None:
             params["since"] = since
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         # Allow callers to override the output name while retaining a descriptive default.
         filename = output_filename or f"repo_issues_page_{page}_per_{per_page}.json"
         self._persist(
             data,
             filename=filename,
-            level="log",
             post_msg=f"Fetched {len(data)} issues (state={state})",
         )
         return data
@@ -1176,12 +970,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         :param issue_number: Issue or PR number
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"get_issue_{issue_number}.json",
-            level="log",
             post_msg=f"Issue #{issue_number} fetched.",
         )
         return data
@@ -1248,12 +1041,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                     "Invalid `type` field in the payload: expected an empty list [] to remove issue type or a single-element list [t] to set the issue type."
                 )
 
-        resp = self._patch_request(url, payload=payload)
+        resp = self._patch(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"update_issue_{issue_number}.json",
-            level="log",
             post_msg=f"Issue #{issue_number} updated (state={data.get('state', state)}).",
         )
         return data
@@ -1267,7 +1059,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/lock"
         match lock_reason:
             case "off-topic" | "too heated" | "resolved" | "spam":
-                print(f"⚠️ Try lock issue #{issue_number} by {lock_reason}")
+                logger.warning(f"⚠️ Try lock issue #{issue_number} by {lock_reason}")
             case _:
                 raise ValueError(
                     "⚠️ The lock reason should be one of these: 'off-topic', 'too heated', 'resolved', 'spam' "
@@ -1275,13 +1067,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         # It must be one of these reasons: `off-topic`, `too heated`, `resolved`, `spam`
         payload: dict[str, Any] = {"lock_reason": lock_reason}
         # status code 204 => locked, 403 => forbidden, 404 => resource not found, 410 => gone
-        resp = self._put_request(url, payload=payload)
+        resp = self._put(url, json=payload)
         lock_result = resp.status_code == 204
         self._persist(
             lock_result,
             filename=f"lock_issue_{issue_number}.json",
-            level="log",
-            # Print status code
             post_msg=f"Try lock Issue #{issue_number} (reason={lock_reason}). HTTP response status {lock_result}",
         )
         return lock_result
@@ -1293,13 +1083,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/zh/rest/issues/issues?apiVersion=2022-11-28#unlock-an-issue
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/lock"
-        resp = self._delete_request(url)
+        resp = self._delete(url)
         # status code 204 => locked, 403 => forbidden, 404 => Resource not found,
         unlock_result = resp.status_code == 204
         self._persist(
             unlock_result,
             filename=f"unlock_issue_{issue_number}.json",
-            level="log",
             post_msg=f"Try unlock Issue #{issue_number}. HTTP response status {resp.status_code}",
         )
         return unlock_result
@@ -1336,15 +1125,14 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             if direction is not None:
                 params["direction"] = direction
         elif direction is not None:
-            print("⚠️ Ignoring direction since sort is not specified.")
-        resp = self._get_request(url, params=params)
+            logger.warning("⚠️ Ignoring direction since sort is not specified.")
+        resp = self._get(url, params=params)
         data = resp.json()
         # Mirror issue-list output behavior so consumers can control where results land.
         filename = output_filename or f"repo_pulls_page_{page}_per_{per_page}.json"
         self._persist(
             data,
             filename=filename,
-            level="log",
             post_msg=f"Fetched {len(data)} pulls (state={state})",
         )
         return data
@@ -1357,12 +1145,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         :param pull_number: Pull request number (i.e., issue number of PR)
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}.json",
-            level="log",
             post_msg=f"Fetched pull request #{pull_number}.",
         )
         return data
@@ -1394,14 +1181,13 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         # TODO Verify if `title` and `body` are respected when `issue` is provided.
         if issue_number is not None:
             payload["issue"] = issue_number
-        resp = self._post_request(url, payload=payload)
+        resp = self._post(url, json=payload)
         data = resp.json()
         # Check use `id` or `number`
         new_pull_number = data.get("number", "unknown")
         self._persist(
             data,
             filename=f"pull_{new_pull_number}_created.json",
-            level="log",
             post_msg=f"New pull request #{new_pull_number} created.",
         )
         return data
@@ -1433,12 +1219,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             payload["base"] = base
         if maintainer_can_modify is not None:
             payload["maintainer_can_modify"] = maintainer_can_modify
-        resp = self._patch_request(url, payload=payload)
+        resp = self._patch(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_updated.json",
-            level="log",
             post_msg=f"Pull request #{pull_number} updated.",
         )
         return data
@@ -1453,12 +1238,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/commits"
         params: dict[str, Any] = {"per_page": per_page, "page": page}
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_commits_page_{page}.json",
-            level="log",
             post_msg=f"Fetched {len(data)} commits for pull #{pull_number}.",
         )
         return data
@@ -1473,12 +1257,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/files"
         params: dict[str, Any] = {"per_page": per_page, "page": page}
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_files_page_{page}.json",
-            level="log",
             post_msg=f"Fetched {len(data)} files for pull #{pull_number}.",
         )
         return data
@@ -1490,13 +1273,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#check-if-a-pull-request-has-been-merged
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/merge"
-        resp = self._get_request(url)
+        resp = self._get(url)
         # If status code 204 => merged, 404 => not merged
         merge_result = resp.status_code == 204
         self._persist(
             merge_result,
             filename=f"pull_{pull_number}_merge_result.json",
-            level="log",
             post_msg=f"Pull request #{pull_number} merged status: {merge_result}.",
         )
         return merge_result
@@ -1525,18 +1307,17 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         if merge_method is not None:
             match merge_method:
                 case "merge" | "squash" | "rebase":
-                    print(f"⚠️ Try merge #{pull_number} by {merge_method}")
+                    logger.warning(f"⚠️ Try merge #{pull_number} by {merge_method}")
                 case _:
                     raise ValueError(
                         'The merge method to use should be one of: "merge, "squash", "rebase"'
                     )
             payload["merge_method"] = merge_method
-        resp = self._put_request(url, payload=payload)
+        resp = self._put(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_try_merge.json",
-            level="log",
             post_msg=f"Try merge pull request #{pull_number}.",
         )
         return data
@@ -1555,12 +1336,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         payload: dict[str, Any] = {}
         if expected_head_sha is not None:
             payload["expected_head_sha"] = expected_head_sha
-        resp = self._put_request(url, payload=payload)
+        resp = self._put(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_update_branch.json",
-            level="log",
             post_msg=f"Update pull request #{pull_number} branch.",
         )
         return data
@@ -1586,15 +1366,14 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             if direction is not None:
                 params["direction"] = direction
         elif direction is not None:
-            print("⚠️ Ignoring direction since sort is not specified.")
+            logger.warning("⚠️ Ignoring direction since sort is not specified.")
         if since is not None:
             params["since"] = since
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_review_comments_repo_{sort}_page_{page}.json",
-            level="log",
             post_msg=f"Fetched {len(data)} repo pull review comments (sort={sort}).",
         )
         return data
@@ -1606,12 +1385,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#get-a-review-comment-for-a-pull-request
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/comments/{comment_id}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_review_comment_{comment_id}.json",
-            level="log",
             post_msg=f"Fetched pull review comment #{comment_id}.",
         )
         return data
@@ -1624,12 +1402,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/comments/{comment_id}"
         payload: dict[str, Any] = {"body": body}
-        resp = self._patch_request(url, payload=payload)
+        resp = self._patch(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_review_comment_{comment_id}_updated.json",
-            level="log",
             post_msg=f"Pull review comment #{comment_id} updated.",
         )
         return data
@@ -1641,12 +1418,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#delete-a-review-comment-for-a-pull-request
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/comments/{comment_id}"
-        resp = self._delete_request(url)
+        resp = self._delete(url)
         delete_result = resp.status_code == 204
         self._persist(
             delete_result,
             filename=f"pull_review_comment_{comment_id}_deleted.json",
-            level="log",
             post_msg=(
                 f"Delete pull review comment #{comment_id}. "
                 f"HTTP response status {resp.status_code}"
@@ -1675,15 +1451,14 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             if direction is not None:
                 params["direction"] = direction
         elif direction is not None:
-            print("⚠️ Ignoring direction since sort is not specified.")
+            logger.warning("⚠️ Ignoring direction since sort is not specified.")
         if since is not None:
             params["since"] = since
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_comments_{sort}_page_{page}.json",
-            level="log",
             post_msg=f"Fetched {len(data)} review comments for pull #{pull_number}.",
         )
         return data
@@ -1748,13 +1523,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                         "`start_line` must be set when `start_side` is provided."
                     )
 
-        resp = self._post_request(url, payload=payload)
+        resp = self._post(url, json=payload)
         data = resp.json()
         comment_id = data.get("id", "unknown")
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_comment_{comment_id}_created.json",
-            level="log",
             post_msg=f"Pull review comment #{comment_id} for pull #{pull_number} created.",
         )
         return data
@@ -1770,13 +1544,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         # Replies to replies are not supported.
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/comments/{comment_id}/replies"
         payload: dict[str, Any] = {"body": body}
-        resp = self._post_request(url, payload=payload)
+        resp = self._post(url, json=payload)
         data = resp.json()
         reply_id = data.get("id", "unknown")
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_comment_{comment_id}_replied_{reply_id}.json",
-            level="log",
             post_msg=f"Pull reply to review comment #{comment_id}, reply_id #{reply_id}, for pull #{pull_number} created.",
         )
         return data
@@ -1791,13 +1564,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/pulls/review-requests?apiVersion=2022-11-28#list-requested-reviewers-for-a-pull-request
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/requested_reviewers"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         filename = output_filename or f"pull_{pull_number}_requested_reviewers.json"
         self._persist(
             data,
             filename=filename,
-            level="log",
             post_msg=f"Fetched requested reviewers for pull #{pull_number}.",
         )
         return data
@@ -1823,12 +1595,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             raise ValueError(
                 "At least one reviewer or team_reviewer must be specified."
             )
-        resp = self._post_request(url, payload=payload)
+        resp = self._post(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_requested_reviewers_added.json",
-            level="log",
             post_msg=f"Requested reviewers for pull #{pull_number}.",
         )
         return data
@@ -1854,12 +1625,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             payload["reviewers"] = reviewers
         if team_reviewers:
             payload["team_reviewers"] = team_reviewers
-        resp = self._delete_request(url, payload=payload)
+        resp = self._delete(url, json=payload)
         data = resp.json() if resp.content else {}
         self._persist(
             data,
             filename=f"pull_{pull_number}_requested_reviewers_removed.json",
-            level="log",
             post_msg=f"Removed requested reviewers {reviewers}, {team_reviewers} for pull #{pull_number}.",
         )
         return data
@@ -1875,12 +1645,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews"
         params: dict[str, Any] = {"per_page": per_page, "page": page}
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_reviews_page_{page}.json",
-            level="log",
             post_msg=f"Fetched {len(data)} reviews for pull #{pull_number}.",
         )
         return data
@@ -1911,13 +1680,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             payload["commit_id"] = commit_id
         if body is None and event is None and comments is None:
             raise ValueError("Must specify at least one of body, event, or comments.")
-        resp = self._post_request(url, payload=payload)
+        resp = self._post(url, json=payload)
         data = resp.json()
         review_id = data.get("id", "unknown")
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_{review_id}_created.json",
-            level="log",
             post_msg=f"Created review #{review_id} for pull #{pull_number}.",
         )
         return data
@@ -1929,12 +1697,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#get-a-review-for-a-pull-request
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_{review_id}.json",
-            level="log",
             post_msg=f"Fetched pull #{pull_number} review #{review_id}.",
         )
         return data
@@ -1949,12 +1716,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}"
         payload: dict[str, Any] = {"body": body}
-        resp = self._put_request(url, payload=payload)
+        resp = self._put(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_{review_id}_updated.json",
-            level="log",
             post_msg=f"Updated review #{review_id} for pull #{pull_number}.",
         )
         return data
@@ -1966,14 +1732,13 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#delete-a-pending-review-for-a-pull-request
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}"
-        resp = self._delete_request(url)
+        resp = self._delete(url)
         delete_result = resp.status_code in {200, 204}
         # With body
         data = resp.json() if resp.content else {}
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_{review_id}_deleted.json",
-            level="log",
             post_msg=(
                 f"Delete review #{review_id} for pull #{pull_number}, result: {delete_result}. "
                 f"HTTP response status {resp.status_code}"
@@ -1991,12 +1756,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}/comments"
         params: dict[str, Any] = {"per_page": per_page, "page": page}
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_{review_id}_comments_page_{page}.json",
-            level="log",
             post_msg=(
                 f"Fetched {len(data)} comments for review #{review_id} on pull #{pull_number}."
             ),
@@ -2020,14 +1784,13 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         if event != "DISMISS":
             raise ValueError('event only accept "DISMISS"')
         payload["event"] = "DISMISS"
-        resp = self._put_request(url, payload=payload)
+        resp = self._put(url, json=payload)
         dismiss_result = resp.status_code in {200, 204}
         # With body
         data = resp.json() if resp.content else {}
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_{review_id}_dismissed.json, result {dismiss_result}",
-            level="log",
             post_msg=f"Dismissed review #{review_id} for pull #{pull_number}.",
         )
         return data
@@ -2047,7 +1810,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         url = f"/repos/{self.repo_owner}/{self.repo_name}/pulls/{pull_number}/reviews/{review_id}/events"
         match event:
             case "APPROVE" | "REQUEST_CHANGES" | "COMMENT":
-                print(
+                logger.warning(
                     f"⚠️ Try submit pull #{pull_number} review_id {review_id} as {event}"
                 )
             case _:
@@ -2055,12 +1818,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         payload: dict[str, Any] = {"event": event}
         if body is not None:
             payload["body"] = body
-        resp = self._post_request(url, payload=payload)
+        resp = self._post(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"pull_{pull_number}_review_{review_id}_submitted.json",
-            level="log",
             post_msg=f"Submitted review #{review_id} for pull #{pull_number} with event {event}.",
         )
         return data
@@ -2083,12 +1845,13 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         if context is not None:
             # use when use `gfm` mode
             if mode == "gfm":
+                # context like `octo-org/octo-repo` to convert the `#42` to issue 42 link
                 payload["context"] = context
             elif mode == "markdown":
-                print(
+                logger.info(
                     "Try to render a markdown with `markdown` mode. `context` setting does not work."
                 )
-        resp = self._post_request(url, payload=payload)
+        resp = self._post(url, json=payload)
         rendered = resp.text
         # Always persist
         if output_filename is None:
@@ -2098,7 +1861,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         output_path = self.output_dir / filename
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(rendered)
-        print(f"Rendered markdown saved -> {output_path}")
+        logger.info(f"Rendered markdown saved -> {output_path}")
         return rendered
 
     def render_markdown_raw(
@@ -2118,7 +1881,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             "Content-Type": SupportMediaTypes.TEXT_PLAIN.value,
             "Accept": SupportMediaTypes.TEXT_HTML.value,
         }
-        resp = self._post_request(url, headers=headers, data=text.encode("utf-8"))
+        resp = self._post(url, headers=headers, data=text.encode("utf-8"), if_json=False)
         rendered = resp.text
         # Always persist
         if output_filename is None:
@@ -2128,7 +1891,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         output_path = self.output_dir / filename
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(rendered)
-        print(f"Rendered markdown raw saved -> {output_path}")
+        logger.info(f"Rendered markdown raw saved -> {output_path}")
         return rendered
 
     # Comments
@@ -2154,15 +1917,14 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             if direction is not None:
                 params["direction"] = direction
         elif direction is not None:
-            print("⚠️ Ignoring direction since sort is not specified.")
+            logger.warning("⚠️ Ignoring direction since sort is not specified.")
         if since is not None:
             params["since"] = since
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename=f"repo_issue_comments_{sort}_page_{page}.json",
-            level="log",
             post_msg=f"Fetched {len(data)} repo issue comments (sort={sort}).",
         )
         return data
@@ -2185,12 +1947,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         params: dict[str, Any] = {"per_page": per_page, "page": page}
         if since is not None:
             params["since"] = since
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename=f"issue_{issue_number}_comments_page_{page}.json",
-            level="log",
             post_msg=f"Fetched {len(data)} comments for issue #{issue_number}.",
         )
         return data
@@ -2207,13 +1968,12 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             f"/repos/{self.repo_owner}/{self.repo_name}/issues/{issue_number}/comments"
         )
         payload: dict[str, Any] = {"body": body}
-        resp = self._post_request(url, payload=payload)
+        resp = self._post(url, json=payload)
         data = resp.json()
         new_comment_id = data.get("id", "unknown")
         self._persist(
             data,
             filename=f"issue_comment_{new_comment_id}_created.json",
-            level="log",
             post_msg=f"Issue comment #{new_comment_id} for issue #{issue_number} created.",
         )
         return data
@@ -2228,12 +1988,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#get-an-issue-comment
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments/{comment_id}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename=f"issue_comment_{comment_id}_readed.json",
-            level="log",
             post_msg=f"Issue comment #{comment_id} fetched.",
         )
         return data
@@ -2246,12 +2005,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments/{comment_id}"
         payload: dict[str, Any] = {"body": body}
-        resp = self._patch_request(url, payload=payload)
+        resp = self._patch(url, json=payload)
         data = resp.json()
         self._persist(
             data,
             filename=f"issue_comment_{comment_id}_updated.json",
-            level="log",
             post_msg=f"Issue comment #{comment_id} updated.",
         )
         return data
@@ -2266,12 +2024,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#delete-an-issue-comment
         """
         url = f"/repos/{self.repo_owner}/{self.repo_name}/issues/comments/{comment_id}"
-        resp = self._delete_request(url)
+        resp = self._delete(url)
         delete_result = resp.status_code == 204
         self._persist(
             delete_result,
             filename=f"issue_comment_{comment_id}_deleted.json",
-            level="log",
             post_msg=f"Delete issue comment #{comment_id}. HTTP response status {resp.status_code}",
         )
         return delete_result
@@ -2284,12 +2041,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-the-zen-of-github
         """
         url = "/zen"
-        resp = self._get_request(url)
+        resp = self._get(url)
         zen_text = resp.text.strip()
         self._persist(
             {"zen": zen_text},
             filename="github_zen.json",
-            level="log",
             post_msg=f'Fetched GitHub Zen text:\n"{zen_text}"',
         )
         return zen_text
@@ -2304,12 +2060,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         params: dict[str, Any] = {}
         if speech_str is not None:
             params["s"] = speech_str
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         octocat = resp.text
         self._persist(
             {"speech": speech_str, "octocat": octocat},
             filename="github_octocat.json",
-            level="log",
             post_msg=f"🐙 Octocat fetched\n{octocat}",
         )
         return octocat
@@ -2321,12 +2076,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-apiname-meta-information
         """
         url = "/"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename="github_api_root.json",
-            level="log",
             post_msg=f"Fetched GitHub API root with {len(data)} keys.",
         )
         return data
@@ -2338,12 +2092,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-github-meta-information
         """
         url = "/meta"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename="github_meta.json",
-            level="log",
             post_msg=f"Fetched GitHub API metadata with {len(data)} keys.",
         )
         return data
@@ -2355,12 +2108,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-all-api-versions
         """
         url = "/versions"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         self._persist(
             data,
             filename="github_api_versions.json",
-            level="log",
             post_msg=f"List all supported GitHub API versions:\n {data}",
         )
         return data
@@ -2373,7 +2125,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-the-authenticated-user
         """
         url = "/user"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         # get user_login and user_id
         user_login = data.get("login", "UNKNOWN")
@@ -2381,7 +2133,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         self._persist(
             data,
             filename=f"auth_user_{user_id}_{user_login}.json",
-            level="log",
             post_msg="Fetched authenticated user info.",
         )
         return data
@@ -2419,7 +2170,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
             payload["location"] = location
         if hireable is not None:
             payload["hireable"] = hireable
-        resp = self._patch_request(url, payload=payload)
+        resp = self._patch(url, json=payload)
         data = resp.json()
         # get user_login and user_id
         user_login = data.get("login", "UNKNOWN")
@@ -2427,7 +2178,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         self._persist(
             data,
             filename=f"auth_user_{user_id}_{user_login}_updated.json",
-            level="log",
             post_msg=f"Updated authenticated user info.",
         )
         return data
@@ -2439,7 +2189,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-a-user-using-their-id
         """
         url = f"/user/{userid}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         # get user_login and user_id
         user_login = data.get("login", "UNKNOWN")
@@ -2448,7 +2198,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         self._persist(
             data,
             filename=f"user_{user_id}_{user_login}_by_userid.json",
-            level="log",
             post_msg=f"Fetched user info for {user_id}",
         )
         return data
@@ -2467,12 +2216,11 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         params: dict[str, Any] = {"per_page": per_page}
         if since is not None:
             params["since"] = since
-        resp = self._get_request(url, params=params)
+        resp = self._get(url, params=params)
         data = resp.json()
         self._persist(
             data,
             filename=f"users.json",
-            level="log",
             post_msg=f"Fetched {len(data)} users.",
         )
         return data
@@ -2486,7 +2234,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-a-user
         """
         url = f"/users/{username}"
-        resp = self._get_request(url)
+        resp = self._get(url)
         data = resp.json()
         # get user_login and user_id
         user_login = data.get("login", "UNKNOWN")
@@ -2494,7 +2242,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         self._persist(
             data,
             filename=f"user_{user_id}_{user_login}_by_username.json",
-            level="log",
             post_msg=f"Fetched user info for {username}.",
         )
         return data
