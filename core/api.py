@@ -8,12 +8,23 @@ Implements various common APIs for REST API and gh CLI based crawlers.
 Authors: edwardzcn
 """
 
+import logging
 import requests
+
+# from requests.exceptions import HTTPError, ConnectTimeout
+from requests import RequestException
+from requests.exceptions import HTTPError, ConnectTimeout
 from pathlib import Path
 from typing import Any
 from .base import GitHubCrawlerBase
 from .config import SupportMediaTypes
-
+from .exceptions import (
+    GitHubException,
+    GitHubHTTPError,
+    TransportError,
+    error_from_response,
+)
+logger = logging.getLogger(__name__)
 
 class GitHubRESTCrawler(GitHubCrawlerBase):
     """GitHub REST API implementation of GitHubCrawlerBase"""
@@ -129,7 +140,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         :param timeout: Optional timeout setting for the request in seconds.
                         Can be a float or a tuple (connect timeout, read timeout).
         :return: The `requests.Response` object resulting from the HTTP request.
-        :raises: Raises exceptions from `requests` if the request fails or returns an HTTP error status.
+        :raises: Raises `TransportError` or `GitHubHTTPError` from custom exceptions.
         """
         # Check if it is endpoint or full URL
         if not url.startswith("http"):
@@ -150,15 +161,49 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
                 json=json_payload,
                 timeout=timeout,
             )
-            resp.raise_for_status()
-        except Exception as e:
-            print(f"❌ Error during {method.upper()} request → {url}")
-            print(f"Reason: {e}")
-            if resp is not None:
-                print(f"Response Status Code: {resp.status_code}")
-                print(f"Response Content: {resp.text[:200]}")
-            raise
-        return resp
+            # resp.raise_for_status()  # remove raise_for_status to use custom exceptions
+        # except HTTPError as http_err:
+        #     print(f"❌ HTTP error during {method.upper()} request → {url}")
+        #     print(f"❌ HTTP error reason: {http_err}")
+        #     resp = http_err.response
+        #     if resp is not None:
+        #         print(f"❌ HTTP error with response:")
+        #         print(f"Response Status Code: {resp.status_code}")
+        #         print(f"Response Content: {resp.text[:200]}")
+        #     else:
+        #         print(f"❌ HTTP error without response.")
+        #     raise
+        # except ConnectTimeout as connect_timeout_err:
+        #     # TODO be safe to retry.
+        #     print(f"❌ ConnectTimeout error during {method.upper()} request → {url}")
+        #     print(f"❌ ConnectTimeout error reason: {connect_timeout_err}")
+        #     resp = connect_timeout_err.response
+        #     if resp is not None:
+        #         print(f"Response Status Code: {resp.status_code}")
+        #         print(f"Response Content: {resp.text[:200]}")
+        #     raise
+        # except Exception as e:
+        #     print(f"❌ Other exception during {method.upper()} request → {url}")
+        #     print(f"❌ Other exception reason: {e}")
+        #     if resp is not None:
+        #         print(f"Response Status Code: {resp.status_code}")
+        #         print(f"Response Content: {resp.text[:200]}")
+        #     raise
+        except RequestException as exc:
+            logger.error("Transport error during %s %s: %r",
+                         method.upper(),
+                         url,
+                         exc)
+            raise TransportError(exc) from exc
+        if 200 <= resp.status_code < 300:
+            return resp
+        err = error_from_response(resp)
+        logger.error("GitHub HTTP error during %s %s: status=%s, text(partial)=%s",
+                     method.upper(),
+                     url,
+                     err.code,
+                     err.text[:200])
+        raise err
 
     # --------------------------------------------------------
     # REST API Endpoints
@@ -449,11 +494,487 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return success
 
-    ## TODO Github-hosted runners
-    ## Link: https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28
+    ## GitHub-Hosted runners
+    def list_org_hosted_runners(
+        self, org: str | None = None, per_page: int = 30, page: int = 1
+    ) -> dict[str, Any]:
+        """
+        List GitHub-hosted runners for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#list-github-hosted-runners-for-an-organization
+        """
+        # default org_name is the repo_owner e.g. apache
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners"
+        params = {"per_page": per_page, "page": page}
+        resp = self._get_request(url, params=params)
+        data = resp.json()
+        total = data.get("total_count", 0)
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runners_page_{page}.json",
+            level="log",
+            post_msg=f"Fetched {total} hosted-runners for org {org_name}.",
+        )
+        return data
 
-    ## TODO OIDC
-    ## Link: https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28
+    def create_org_hosted_runner(
+        self,
+        name: str,
+        image: dict[str, Any],
+        size: str,
+        runner_group_id: int,
+        org: str | None = None,
+        maximum_runners: int | None = None,
+        enable_static_ip: bool | None = None,
+        image_gen: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a GitHub-hosted runner for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#create-a-github-hosted-runner-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners"
+        payload: dict[str, Any] = {
+            "name": name,
+            "image": image,
+            "size": size,
+            "runner_group_id": runner_group_id,
+        }
+        if maximum_runners is not None:
+            payload["maximum_runners"] = maximum_runners
+        if enable_static_ip is not None:
+            payload["enable_static_ip"] = enable_static_ip
+        if image_gen is not None:
+            payload["image_gen"] = image_gen
+        resp = self._post_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_created.json",
+            level="log",
+            post_msg=f"Created hosted-runner '{name}' in org {org_name}.",
+        )
+        return data
+
+    def list_org_hosted_runner_custom_images(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        List custom images for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#list-custom-images-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom"
+        resp = self._get_request(url)
+        data = resp.json()
+        total = data.get("total_count", 0)
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_custom_images.json",
+            level="log",
+            post_msg=f"Fetched {total} hosted-runner custom images for org {org_name}.",
+        )
+        return data
+
+    def get_org_hosted_runner_custom_image(
+        self, image_definition_id: str, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get a custom image definition for GitHub Actions hosted runners.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-a-custom-image-definition-for-github-actions-hosted-runners
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}.json",
+            level="log",
+            post_msg=f"Fetched hosted-runner custom image {image_definition_id} for org {org_name}.",
+        )
+        return data
+
+    def delete_org_hosted_runner_custom_image(
+        self, image_definition_id: str, org: str | None = None
+    ) -> bool:
+        """
+        Delete a custom image from the organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#delete-a-custom-image-from-the-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}"
+        resp = self._delete_request(url)
+        success = 200 <= resp.status_code < 300
+        self._persist(
+            {
+                "image_definition_id": image_definition_id,
+                "status_code": resp.status_code,
+                "success": success,
+            },
+            filename=f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_deleted.json",
+            level="log",
+            post_msg=f"Deleted hosted-runner custom image {image_definition_id} for org {org_name}.",
+        )
+        return success
+
+    def list_org_hosted_runner_custom_image_versions(
+        self, image_definition_id: str, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        List image versions of a custom image for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#list-image-versions-of-a-custom-image-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions"
+        resp = self._get_request(url)
+        data = resp.json()
+        total = data.get("total_count", 0)
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_versions.json",
+            level="log",
+            post_msg=(
+                f"Fetched {total} hosted-runner custom image {image_definition_id} versions for org {org_name}."
+            ),
+        )
+        return data
+
+    def get_org_hosted_runner_custom_image_version(
+        self, image_definition_id: str, version: str, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get an image version of a custom image for GitHub Actions hosted runners.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-an-image-version-of-a-custom-image-for-github-actions-hosted-runners
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions/{version}"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=(
+                f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_version_{version}.json"
+            ),
+            level="log",
+            post_msg=(
+                f"Fetched hosted runner custom image {image_definition_id} version {version} for org {org_name}."
+            ),
+        )
+        return data
+
+    def delete_org_hosted_runner_custom_image_version(
+        self, image_definition_id: str, version: str, org: str | None = None
+    ) -> bool:
+        """
+        Delete an image version of a custom image from the organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#delete-an-image-version-of-custom-image-from-the-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/custom/{image_definition_id}/versions/{version}"
+        resp = self._delete_request(url)
+        success = 200 <= resp.status_code < 300
+        self._persist(
+            {
+                "image_definition_id": image_definition_id,
+                "version": version,
+                "status_code": resp.status_code,
+                "success": success,
+            },
+            filename=(
+                f"org_{org_name}_hosted_runner_custom_image_{image_definition_id}_version_{version}_deleted.json"
+            ),
+            level="log",
+            post_msg=(
+                f"Deleted hosted runner custom image {image_definition_id} version {version} for org {org_name}."
+            ),
+        )
+        return success
+
+    def list_org_hosted_runner_github_owned_images(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get the list of GitHub-owned images for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-github-owned-images-for-github-hosted-runners-in-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/github-owned"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_github_owned_images.json",
+            level="log",
+            post_msg=f"Fetched GitHub-owned hosted runner images for org {org_name}.",
+        )
+        return data
+
+    def list_org_hosted_runner_partner_images(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get the list of partner images for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-partner-images-for-github-hosted-runners-in-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/images/partner"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_partner_images.json",
+            level="log",
+            post_msg=f"Fetched partner hosted runner images for org {org_name}.",
+        )
+        return data
+
+    def get_org_hosted_runner_limits(self, org: str | None = None) -> dict[str, Any]:
+        """
+        Get limits on GitHub-hosted runners for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-limits-on-github-hosted-runners-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/limits"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_limits.json",
+            level="log",
+            post_msg=f"Fetched hosted runner limits for org {org_name}.",
+        )
+        return data
+
+    def get_org_hosted_runner_machine_sizes(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get machine sizes for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-github-hosted-runners-machine-specs-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/machine-sizes"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_machine_sizes.json",
+            level="log",
+            post_msg=f"Fetched hosted runner machine sizes for org {org_name}.",
+        )
+        return data
+
+    def list_org_hosted_runner_platforms(
+        self, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get the list of platforms for GitHub-hosted runners in an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-platforms-for-github-hosted-runners-in-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/platforms"
+        resp = self._get_request(url)
+        data = resp.json()
+        total = data.get("total_count", 0)
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_platforms.json",
+            level="log",
+            post_msg=f"Fetched {total} hosted runner platforms for org {org_name}.",
+        )
+        return data
+
+    def get_org_hosted_runner(
+        self, hosted_runner_id: int, org: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Get a GitHub-hosted runner for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#get-a-github-hosted-runner-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/{hosted_runner_id}"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_{hosted_runner_id}.json",
+            level="log",
+            post_msg=f"Fetched hosted runner #{hosted_runner_id} for org {org_name}.",
+        )
+        return data
+
+    def update_org_hosted_runner(
+        self,
+        hosted_runner_id: int,
+        org: str | None = None,
+        name: str | None = None,
+        maximum_runners: int | None = None,
+        enable_static_ip: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update a GitHub-hosted runner for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#update-a-github-hosted-runner-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/{hosted_runner_id}"
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if maximum_runners is not None:
+            payload["maximum_runners"] = maximum_runners
+        if enable_static_ip is not None:
+            payload["enable_static_ip"] = enable_static_ip
+        if not payload:
+            raise ValueError(
+                "At least one field must be provided to update a hosted runner."
+            )
+        resp = self._patch_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_{hosted_runner_id}_updated.json",
+            level="log",
+            post_msg=f"Updated hosted runner #{hosted_runner_id} for org {org_name}.",
+        )
+        return data
+
+    def delete_org_hosted_runner(
+        self, hosted_runner_id: int, org: str | None = None
+    ) -> bool:
+        """
+        Delete a GitHub-hosted runner for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/hosted-runners?apiVersion=2022-11-28#delete-a-github-hosted-runner-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/hosted-runners/{hosted_runner_id}"
+        resp = self._delete_request(url)
+        success = 200 <= resp.status_code < 300
+        # With body
+        data = resp.json() if resp.content else {}
+        self._persist(
+            data,
+            filename=f"org_{org_name}_hosted_runner_{hosted_runner_id}_deleted.json",
+            level="log",
+            post_msg=f"Deleted hosted runner #{hosted_runner_id} for org {org_name}, result {success}.",
+        )
+        return success
+
+    ## OIDC
+    def get_org_oidc_customization_sub(self, org: str | None = None) -> dict[str, Any]:
+        """
+        Get the customization template for an OIDC subject claim for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#get-the-customization-template-for-an-oidc-subject-claim-for-an-organization
+        """
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/oidc/customization/sub"
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_oidc_customization_sub.json",
+            level="log",
+            post_msg=f"Fetched OIDC subject customization for org {org_name}.",
+        )
+        return data
+
+    def set_org_oidc_customization_sub(
+        self,
+        use_default: bool,
+        subject_claim_template: str | None = None,
+        org: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Set the customization template for an OIDC subject claim for an organization.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#set-the-customization-template-for-an-oidc-subject-claim-for-an-organization
+        """
+        if not use_default and subject_claim_template is None:
+            raise ValueError(
+                "subject_claim_template is required when use_default is False."
+            )
+        org_name = org or self.repo_owner
+        url = f"/orgs/{org_name}/actions/oidc/customization/sub"
+        payload: dict[str, Any] = {"use_default": use_default}
+        if subject_claim_template is not None:
+            payload["subject_claim_template"] = subject_claim_template
+        resp = self._put_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"org_{org_name}_oidc_customization_sub_set.json",
+            level="log",
+            post_msg=f"Updated OIDC subject customization for org {org_name}.",
+        )
+        return data
+
+    def get_repo_oidc_customization_sub(self) -> dict[str, Any]:
+        """
+        Get the customization template for an OIDC subject claim for a repository.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#get-the-customization-template-for-an-oidc-subject-claim-for-a-repository
+        """
+        url = (
+            f"/repos/{self.repo_owner}/{self.repo_name}/actions/oidc/customization/sub"
+        )
+        resp = self._get_request(url)
+        data = resp.json()
+        self._persist(
+            data,
+            filename="repo_oidc_customization_sub.json",
+            level="log",
+            post_msg=(
+                f"Fetched OIDC subject customization for repo {self.repo_owner}/{self.repo_name}."
+            ),
+        )
+        return data
+
+    def set_repo_oidc_customization_sub(
+        self, use_default: bool, subject_claim_template: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Set the customization template for an OIDC subject claim for a repository.
+        GitHub Docs:
+        https://docs.github.com/en/rest/actions/oidc?apiVersion=2022-11-28#set-the-customization-template-for-an-oidc-subject-claim-for-a-repository
+        """
+        if not use_default and subject_claim_template is None:
+            raise ValueError(
+                "subject_claim_template is required when use_default is False."
+            )
+        url = (
+            f"/repos/{self.repo_owner}/{self.repo_name}/actions/oidc/customization/sub"
+        )
+        payload: dict[str, Any] = {"use_default": use_default}
+        if subject_claim_template is not None:
+            payload["subject_claim_template"] = subject_claim_template
+        resp = self._put_request(url, payload=payload)
+        data = resp.json()
+        self._persist(
+            data,
+            filename="repo_oidc_customization_sub_set.json",
+            level="log",
+            post_msg=(
+                f"Updated OIDC subject customization for repo {self.repo_owner}/{self.repo_name}."
+            ),
+        )
+        return data
 
     ## TODO Permissions
     ## Link: https://docs.github.com/en/rest/actions/permissions?apiVersion=2022-11-28
@@ -874,7 +1395,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         if issue_number is not None:
             payload["issue"] = issue_number
         resp = self._post_request(url, payload=payload)
-        resp.raise_for_status()
         data = resp.json()
         # Check use `id` or `number`
         new_pull_number = data.get("number", "unknown")
@@ -1688,7 +2208,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         payload: dict[str, Any] = {"body": body}
         resp = self._post_request(url, payload=payload)
-        resp.raise_for_status()
         data = resp.json()
         new_comment_id = data.get("id", "unknown")
         self._persist(
@@ -1849,7 +2368,7 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
     # User
     def get_authenticated_user(self) -> dict[str, Any]:
         """
-        Get the currently authenticated user's information.
+        Get the currently authenticated user's profile.
         GitHub Docs:
         https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-the-authenticated-user
         """
@@ -1859,7 +2378,6 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         # get user_login and user_id
         user_login = data.get("login", "UNKNOWN")
         user_id = data.get("id", "UNKNOWN")
-        # save to auth_user_{id}_{login}.json
         self._persist(
             data,
             filename=f"auth_user_{user_id}_{user_login}.json",
@@ -1868,24 +2386,118 @@ class GitHubRESTCrawler(GitHubCrawlerBase):
         )
         return data
 
-    def get_user_with_username(self, username: str) -> dict[str, Any]:
+    def update_authenticated_user(
+        self,
+        name: str | None,
+        email: str | None,
+        blog: str | None,
+        twitter_username: str | None,
+        company: str | None,
+        location: str | None,
+        hireable: bool | None,
+        bio: str | None,
+    ) -> dict[str, Any]:
         """
-        Get a user's public information with their username.
+        Update the authenticated user's profile
+        Note: the changed `email` will not be desplayed on the public profile if your proivacy settings are still enforced.
         GitHub Docs:
-        https://docs.github.com/zh/rest/users/users?apiVersion=2022-11-28#get-a-user-using-their-id
+        https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#update-the-authenticated-user
         """
-        # TODO: check if username is valid
-        url = f"/user/{username}"
+        url = "/user"
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if email is not None:
+            payload["email"] = email
+        if blog is not None:
+            payload["blog"] = blog
+        if twitter_username is not None:
+            payload["twitter_username"] = twitter_username
+        if company is not None:
+            payload["company"] = company
+        if location is not None:
+            payload["location"] = location
+        if hireable is not None:
+            payload["hireable"] = hireable
+        resp = self._patch_request(url, payload=payload)
+        data = resp.json()
+        # get user_login and user_id
+        user_login = data.get("login", "UNKNOWN")
+        user_id = data.get("id", "UNKNOWN")
+        self._persist(
+            data,
+            filename=f"auth_user_{user_id}_{user_login}_updated.json",
+            level="log",
+            post_msg=f"Updated authenticated user info.",
+        )
+        return data
+
+    def get_user_with_userid(self, userid: str) -> dict[str, Any]:
+        """
+        Get someone's public information with their user id.
+        GitHub Docs:
+        https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-a-user-using-their-id
+        """
+        url = f"/user/{userid}"
         resp = self._get_request(url)
         data = resp.json()
         # get user_login and user_id
         user_login = data.get("login", "UNKNOWN")
         user_id = data.get("id", "UNKNOWN")
-        # save to user_{username}_{id}.json
+        user_login = data.get("login", "UNKNOWN")
         self._persist(
             data,
-            filename=f"user_{user_id}_{user_login}.json",
+            filename=f"user_{user_id}_{user_login}_by_userid.json",
+            level="log",
+            post_msg=f"Fetched user info for {user_id}",
+        )
+        return data
+
+    def list_users(
+        self,
+        since: int | None,
+        per_page: int = 30,
+    ) -> list[dict[str, Any]]:
+        """
+        List all users in the order they signed up including personal user accounts and organization accounts.
+        GitHub Docs:
+        https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#list-users
+        """
+        url = "/users"
+        params: dict[str, Any] = {"per_page": per_page}
+        if since is not None:
+            params["since"] = since
+        resp = self._get_request(url, params=params)
+        data = resp.json()
+        self._persist(
+            data,
+            filename=f"users.json",
+            level="log",
+            post_msg=f"Fetched {len(data)} users.",
+        )
+        return data
+
+    def get_user_with_username(self, username: str) -> dict[str, Any]:
+        """
+        Get someone's public information with their username.
+        Note:
+        If you are requesting information about an Enterprise Managed User, or a GitHub App bot that is installed in an organization that uses Enterprise Managed Users, you must be authenticate.
+        GitHub Docs:
+        https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-a-user
+        """
+        url = f"/users/{username}"
+        resp = self._get_request(url)
+        data = resp.json()
+        # get user_login and user_id
+        user_login = data.get("login", "UNKNOWN")
+        user_id = data.get("id", "UNKNOWN")
+        self._persist(
+            data,
+            filename=f"user_{user_id}_{user_login}_by_username.json",
             level="log",
             post_msg=f"Fetched user info for {username}.",
         )
         return data
+
+    # TODO add get_user_contextual
+    # https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-contextual-information-for-a-user

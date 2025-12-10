@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from requests import HTTPError
 import pytest
 
 from core.api import GitHubRESTCrawler
 from core.config import OUTPUT_DIR_TEST, get_github_token_test
+from core.exceptions import UnprocessableEntity
 
 TEST_REPO_OWNER = "edwardzcn-decade"
 TEST_REPO_NAME = "gh-easy-crawler"
@@ -60,6 +60,7 @@ def prepare_environment():
 def sample_pull(crawler: GitHubRESTCrawler) -> dict:
     pulls = crawler.list_repo_pulls(state="open", per_page=30, page=1)
     if not pulls:
+        print("⚠️ TEST WARNING: Test repository has no open pull requests. Some tests may skip.")
         pytest.skip("Test repository has no open pull requests to inspect.")
     return pulls[0]
 
@@ -104,10 +105,9 @@ def test_request_and_remove_pull_reviewers(
         )
         assert added_output.exists()
         assert "requested_reviewers" in added
-    except HTTPError as e_422:
-        # Response Status Code: 422
-        # Response Content: {"message":"Review cannot be requested from pull request author.", ...}
-        print(e_422.strerror)
+    except UnprocessableEntity as err:
+        assert err.code == 422
+        assert "Review cannot be requested from pull request author." in err.text
     finally:
         if cleanup_required:
             removed = crawler.remove_pull_reviewers(
