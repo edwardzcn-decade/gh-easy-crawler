@@ -22,7 +22,7 @@ GITHUB_REPO_OWNER = "apache"
 GITHUB_REPO_NAME = "flink-cdc"
 OUTPUT_DIR = "cdc_output"
 START_TIMESTAMP = datetime(2024, 3, 5, 0, 0, 0, tzinfo=timezone.utc)
-TITLE_PATTERN = re.compile(r"FLINK-\d{5}")
+TITLE_PATTERN = re.compile(r"FLINK-\d+")
 API_CALL_DELAY = 0.5  # seconds
 METRIC_HEADERS = [
     "bug_id",
@@ -283,7 +283,7 @@ def _collect_from_cache_or_api(
     per_page: int = 100,
     *,
     filter_fn=None,
-    api_call_delay: float = 0.5,
+    api_call_delay: float = API_CALL_DELAY,
 ) -> list[dict]:
     """
     Data collection helper:

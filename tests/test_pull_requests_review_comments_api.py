@@ -13,6 +13,7 @@ import pytest
 
 from core.api import GitHubRESTCrawler
 from core.config import OUTPUT_DIR_TEST, get_github_token_test
+from core.exceptions import GitHubHTTPError
 
 TEST_REPO_OWNER = "edwardzcn-decade"
 TEST_REPO_NAME = "gh-easy-crawler"
@@ -131,8 +132,9 @@ def test_review_comment_lifecycle_left_one(
             line=1,
             side="RIGHT",
         )
-    except Exception as e:
-        assert 
+    except GitHubHTTPError as err:
+        assert err.code == 422
+        pytest.skip("Could not create pull review comment for resolved pull request.")
     comment_id = created["id"]
     created_output = (
         Path(OUTPUT_DIR_TEST)
