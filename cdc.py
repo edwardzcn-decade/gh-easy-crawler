@@ -205,7 +205,6 @@ def _load_existing_metrics(csv_path: Path) -> list[dict]:
                 if any(cell.strip() for cell in raw_row):
                     header = raw_row
                     if header != METRIC_HEADERS:
-                        print("Invalid header:", header)
                         raise ValueError(
                             "The readed header is not euql to METRIC_HEADERS. Check it"
                         )
@@ -399,9 +398,9 @@ def collect_get_pr_detail(crawler: GitHubRESTCrawler, pull_number: int):
     }
 
 
-def collect_files_changed(crawler: GitHubRESTCrawler, pull_number: int) -> list[str]:
+def collect_files_metrics(crawler: GitHubRESTCrawler, pull_number: int):
     """
-    Return filenames touched by a pull request, leveraging cached data when available.
+    Return filenames touched by a pull request, leveraging cached data when available, and number of changes.
     """
 
     def _load_cache(pn: int):
@@ -418,7 +417,10 @@ def collect_files_changed(crawler: GitHubRESTCrawler, pull_number: int) -> list[
         per_page=per_page,
     )
     # Solve data
-    return list(filter(None, [f.get("filename") for f in pr_files]))
+    return {
+        "files": list(filter(None, [f.get("filename") for f in pr_files])),
+        "file_count": len(pr_files),
+        "loc_changed": sum(f.get("changes", 0) for f in pr_files),}
 
 
 def collect_labels(pr: dict) -> list[str]:
@@ -615,8 +617,8 @@ def summarize_pulls(
         base_detail: dict[str, str] = _get_branch_name_and_login(pr, "base")
         # Call other APIs
         pr_detail: dict = collect_get_pr_detail(crawler, pull_number)
-        files_changed: list[str] = collect_files_changed(crawler, pull_number)
-        files_changed_count = len(files_changed)
+        files_changed_detail = collect_files_metrics(crawler, pull_number)
+        # files_changed_count = len(files_changed)
         issue_comments_detail = collect_issue_comments(crawler, pull_number)
         review_comments_detail = collect_review_comments(crawler, pull_number)
         review_blocs_detail = collect_review_blocs(crawler, pull_number)
@@ -630,8 +632,9 @@ def summarize_pulls(
             "tool_merged_at": merged_at or "",
             "tool_merge_commit_hash": hash or "",
             "tool_labels": ";".join(labels),
-            "tool_files_changed": ";".join(files_changed),
-            "tool_files_changed_count": files_changed_count,
+            "tool_files_changed": ";".join(files_changed_detail.get("files", [])),
+            "tool_files_changed_count": files_changed_detail.get("file_count", 0),
+            "tool_loc_changed": files_changed_detail.get("loc_changed", 0),
         }
         new_row |= head_detail
         new_row |= base_detail
