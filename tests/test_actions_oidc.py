@@ -58,8 +58,8 @@ def crawler(tmp_path, call_log, monkeypatch) -> GitHubRESTCrawler:
 
         return _stub
 
-    monkeypatch.setattr(crawler, "_get_request", make_stub("GET"))
-    monkeypatch.setattr(crawler, "_put_request", make_stub("PUT"))
+    monkeypatch.setattr(crawler, "_get", make_stub("GET"))
+    monkeypatch.setattr(crawler, "_put", make_stub("PUT"))
     return crawler
 
 
