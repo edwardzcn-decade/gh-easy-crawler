@@ -33,6 +33,10 @@ METRIC_HEADERS = [
     "tool_merge_commit_hash",
     "tool_labels",
     "tool_files_changed",
+    "tool_files_changed_count",
+    "tool_people_involved_count",
+    "tool_loc_changed",
+    "tool_pr_tries_count",
     "tool_total_comments_count",
     "tool_total_chars",
     "tool_total_words",
@@ -201,6 +205,7 @@ def _load_existing_metrics(csv_path: Path) -> list[dict]:
                 if any(cell.strip() for cell in raw_row):
                     header = raw_row
                     if header != METRIC_HEADERS:
+                        print("Invalid header:", header)
                         raise ValueError(
                             "The readed header is not euql to METRIC_HEADERS. Check it"
                         )
@@ -420,9 +425,14 @@ def collect_labels(pr: dict) -> list[str]:
     return list(filter(None, [l.get("name") for l in pr.get("labels", [])]))
 
 
+def _extract_login(x: dict) -> str | None:
+    u = x.get("user") or {}
+    login = u.get("login")
+    return login if isinstance(login, str) and login.strip() else None
+
 def collect_issue_comments(
     crawler: GitHubRESTCrawler, pull_number: int
-) -> dict[str, int]:
+):
     """
     Gather comment statistics for a pull request.
     Prefer cached pages and only hit the API when data is missing.
@@ -442,17 +452,22 @@ def collect_issue_comments(
     )
     # Solve data
     issue_comments_chars = issue_comments_words = issue_comments_bytes = 0
+    issue_people: set[str] = set()
     for comment in issue_comments:
         text = str(comment.get("body") or "").strip()
         issue_comments_chars += len(text)
         issue_comments_words += len(text.split())
         issue_comments_bytes += len(text.encode("utf-8"))
+        usr_login = _extract_login(comment)
+        if usr_login:
+            issue_people.add(usr_login)
 
     return {
         "issue_comments_count": len(issue_comments),
         "issue_comments_chars": issue_comments_chars,
         "issue_comments_words": issue_comments_words,
         "issue_comments_bytes": issue_comments_bytes,
+        "issue_people_set": ";".join(sorted(issue_people)),
     }
 
 
@@ -475,17 +490,22 @@ def collect_review_comments(crawler: GitHubRESTCrawler, pull_number: int):
     )
     # Solve data
     review_comments_chars = review_comments_words = review_comments_bytes = 0
+    review_people: set[str] = set()
     for comment in review_comments:
         text = str(comment.get("body", "").strip())
         review_comments_chars += len(text)
         review_comments_words += len(text.split())
         review_comments_bytes += len(text.encode("utf-8"))
+        usr_login = _extract_login(comment)
+        if usr_login:
+            review_people.add(usr_login)
 
     return {
         "review_comments_count": len(review_comments),
         "review_comments_chars": review_comments_chars,
         "review_comments_words": review_comments_words,
         "review_comments_bytes": review_comments_bytes,
+        "review_people_set": ";".join(sorted(review_people)),
     }
 
 
@@ -509,17 +529,22 @@ def collect_review_blocs(crawler: GitHubRESTCrawler, pull_number: int):
     )
     # Solve data
     review_blocs_chars = review_blocs_words = review_blocs_bytes = 0
+    review_blocs_people: set[str] = set()
     for bloc in review_blocs:
         text = (bloc.get("body") or "").strip()
         review_blocs_chars += len(text)
         review_blocs_words += len(text.split())
         review_blocs_bytes += len(text.encode("utf-8"))
+        usr_login = _extract_login(bloc)
+        if usr_login:
+            review_blocs_people.add(usr_login)
 
     return {
         "review_blocs_count": len(review_blocs),
         "review_blocs_chars": review_blocs_chars,
         "review_blocs_words": review_blocs_words,
         "review_blocs_bytes": review_blocs_bytes,
+        "review_blocs_people_set": ";".join(sorted(review_blocs_people)),
     }
 
 
@@ -591,6 +616,7 @@ def summarize_pulls(
         # Call other APIs
         pr_detail: dict = collect_get_pr_detail(crawler, pull_number)
         files_changed: list[str] = collect_files_changed(crawler, pull_number)
+        files_changed_count = len(files_changed)
         issue_comments_detail = collect_issue_comments(crawler, pull_number)
         review_comments_detail = collect_review_comments(crawler, pull_number)
         review_blocs_detail = collect_review_blocs(crawler, pull_number)
@@ -605,6 +631,7 @@ def summarize_pulls(
             "tool_merge_commit_hash": hash or "",
             "tool_labels": ";".join(labels),
             "tool_files_changed": ";".join(files_changed),
+            "tool_files_changed_count": files_changed_count,
         }
         new_row |= head_detail
         new_row |= base_detail
@@ -633,6 +660,17 @@ def summarize_pulls(
             + new_row["review_comments_bytes"]
             + new_row["review_blocs_bytes"]
         )
+        new_row["tool_people_involved_count"] = len(set(
+            filter(
+                None,
+                (
+                    new_row.get("issue_people_set", "").split(";")
+                    + new_row.get("review_people_set", "").split(";")
+                    + new_row.get("review_blocs_people_set", "").split(";")
+                    + [pr.get("user", {}).get("login")]
+                ),
+            )
+        ))
 
         row = rows_by_bug_hashmap.get(bug_id)
         if row is None:
