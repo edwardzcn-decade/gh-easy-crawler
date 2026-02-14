@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 # Requires-Python: >=3.10
 """
-Base classes and utilities for GitHub Crawler implementations (REST or GitHub CLI)
+Base classes and utilities for GitHub API implementations (REST or GitHub CLI)
 """
 
+import logging
 import json
 import sys
 from abc import ABC, abstractmethod
@@ -21,21 +22,24 @@ from .config import (
     GITHUB_API_URL,
     OUTPUT_DIR_DEFAULT,
     SAVE_MODE_DEFAULT,
+    SupportMediaTypes,
 )
 
+logger = logging.getLogger(__name__)
 
-class GitHubCrawlerBase(ABC):
-    """Base class for GitHub Crawlers"""
+
+class GitHubBase(ABC):
+    """The abstract base class for all GitHub API implementations"""
 
     def __init__(
         self,
-        owner: str | None,
+        owner: str | None = None,
         repo: str | None = None,
         token: str | None = None,
         output_dir: str | None = None,
     ):
         """
-        Initialize the GitHubCrawlerBase.
+        Initialize the GitHubBase.
 
         :param owner: GitHub repository owner name
         :param repo: GitHub repository name
@@ -48,28 +52,48 @@ class GitHubCrawlerBase(ABC):
         # Only work >= Python 3.10
         match (owner, repo):
             case (None, None):
-                print("Using default repository from config.")
+                logger.info("Using default repository from config.")
                 self.repo_name = GITHUB_REPO_NAME
                 self.repo_owner = GITHUB_REPO_OWNER
             case (str() as o, str() as r):
-                print(f"Using provided owner and repo: {o}/{r}")
+                logger.info(f"Using provided owner and repo: {o}/{r}")
                 self.repo_owner = o
                 self.repo_name = r
             case (_, _):
-                print("You must provide both owner and repo, or neither.")
+                logger.info("You must provide both owner and repo, or neither.")
                 sys.exit(1)
         if token is None:
-            print("This crawler will operate in unauthenticated mode.")
+            logger.info("This app will operate in unauthenticated mode.")
         else:
-            print("Using provided token for authentication.")
+            logger.info("Using provided token for authentication.")
         self.token = token
 
         # Set up output directory
-        if output_dir is not None:
-            self.output_dir = Path(output_dir)
-        else:
-            self.output_dir = Path(OUTPUT_DIR_DEFAULT)
-        self.output_dir.mkdir(exist_ok=True)
+        if (
+            SAVE_MODE_DEFAULT == "always"
+            or SAVE_MODE_DEFAULT == "auto"
+            and logger.getEffectiveLevel() <= logging.INFO
+        ):
+            if output_dir is not None:
+                logger.info(
+                    f"This app will persist file in specified dir: {output_dir}"
+                )
+                self.output_dir = Path(output_dir)
+            else:
+                logger.info(
+                    f"This app will persist file in default dir: {OUTPUT_DIR_DEFAULT}"
+                )
+                self.output_dir = Path(OUTPUT_DIR_DEFAULT)
+            self.output_dir.mkdir(exist_ok=True)
+        elif output_dir is not None:
+            if SAVE_MODE_DEFAULT == "never":
+                logger.warning(
+                    f"⚠️ This app will not persist file due to the setting {SAVE_MODE_DEFAULT} of SAVE_MODE_DEFAULT. Omit output_dir."
+                )
+            else:
+                logger.warning(
+                    f"⚠️ This app will not persist file due to the setting {SAVE_MODE_DEFAULT} of SAVE_MODE_DEFAULT. It will follow the logger level and it is not in INFO/DEBUG. Omit output_dir"
+                )
 
     def _get_user_agent_fake(self) -> str:
         """Return a realistic fake browser user agent string for debugging."""
@@ -79,6 +103,9 @@ class GitHubCrawlerBase(ABC):
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/141.0.0.0 Safari/537.36"
         )
+
+    def _get_accept_media_default(self) -> str:
+        return f"{SupportMediaTypes.DEFAULT.value}"
 
     def _get_user_agent_default(self) -> str:
         return f"{APP_NAME}/{APP_VERSION} ({self.user_name})"
@@ -90,25 +117,25 @@ class GitHubCrawlerBase(ABC):
         self,
         data,  # json data
         filename: str,
-        level: str | None = None,  # TODO follow log level controlling
         pre_msg: str | None = None,
         post_msg: str | None = None,
     ):
         match SAVE_MODE_DEFAULT:
             case "always":
-                self._save_json_output(data, filename, pre_msg, post_msg)
+                self._save_json_output(data, filename, post_msg)
             case "never":
                 pass
             case "auto":
-                # TODO follow log level controlling
-                if level is not None:
-                    self._save_json_output(data, filename, pre_msg, post_msg)
+                if logger.getEffectiveLevel() <= logging.INFO:
+                    logger.info(
+                        "Logger level is under INFO and SAVE_MODE_DEFAULT is set to auto. Persist the file."
+                    )
+                    self._save_json_output(data, filename, post_msg)
 
     def _save_json_output(
         self,
         data,
         filename: str,
-        pre_msg: str | None = None,
         post_msg: str | None = None,
     ):
         """
@@ -121,13 +148,11 @@ class GitHubCrawlerBase(ABC):
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         msgs = []
-        if pre_msg:
-            msgs.append(pre_msg)
         msgs.append(f"✅ [{caller_name}] Saved JSON → {output_path}")
         if post_msg:
             msgs.append(post_msg)
         m = " | ".join(msgs)
-        print(f"{m}")
+        logger.info(f"{m}")
 
     def _build_url(self, endpoint: str) -> str:
         """
@@ -140,7 +165,7 @@ class GitHubCrawlerBase(ABC):
         return f"{GITHUB_API_URL}{endpoint}"
 
     @abstractmethod
-    def _get_request(self, url: str, **kwargs):
+    def _get(self, url: str, **kwargs):
         """
         Abstract method to perform a GET request
         REST subclasses should use requests.get();
@@ -150,7 +175,7 @@ class GitHubCrawlerBase(ABC):
         pass
 
     @abstractmethod
-    def _patch_request(self, url: str, **kwargs):
+    def _patch(self, url: str, **kwargs):
         """
         Abstract method to perform a PATCH request
         REST subclasses should use requests.patch();
@@ -160,7 +185,7 @@ class GitHubCrawlerBase(ABC):
         pass
 
     @abstractmethod
-    def _put_request(self, url: str, **kwargs):
+    def _put(self, url: str, **kwargs):
         """
         Abstract method to perform a PUT request
         REST subclasses should use requests.put();
@@ -170,7 +195,7 @@ class GitHubCrawlerBase(ABC):
         pass
 
     @abstractmethod
-    def _post_request(self, url: str, **kwargs):
+    def _post(self, url: str, **kwargs):
         """
         Abstract method to perform a POST request
         REST subclasses should use requests.post();
@@ -180,7 +205,7 @@ class GitHubCrawlerBase(ABC):
         pass
 
     @abstractmethod
-    def _delete_request(self, url: str, **kwargs):
+    def _delete(self, url: str, **kwargs):
         """
         Abstract method to perform a DELETE request
         REST subclasses should use requests.delete();

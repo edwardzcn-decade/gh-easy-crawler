@@ -41,7 +41,7 @@ GITHUB_TOKEN_TEST = None
 # TODO: Make configurable and add sqlite support
 OUTPUT_DIR_DEFAULT = "output"
 OUTPUT_DIR_TEST = "test_output"
-SAVE_MODE_DEFAULT = "auto" # could be "auto" "never" "always"
+SAVE_MODE_DEFAULT = "always" # could be "auto" "never" "always"
 
 
 # Supported Media Types for GitHub API
