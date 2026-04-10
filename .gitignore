@@ -11,3 +11,6 @@ output/
 /tests/__pycache__
 /core/__pycache__
 .python-version
+
+example.txt
+example.txt.sig
