@@ -69,6 +69,7 @@ LINEWIDTH_DEFAULT = 1.8
 FIG_SIZE_SMALL = (5.2, 3.4)
 FIG_SIZE_MEDIUM = (7.0, 4.6)
 FIG_SIZE_WIDE = (10.2, 4.8)
+SHOW_TITLES = False
 
 plt.rcParams.update(
     {
@@ -149,7 +150,7 @@ EDGE_COLOR_DEFAULT = "#FFFFFF"
 
 def apply_axis_style(ax, *, xlabel=None, ylabel=None, title=None, grid_axis="y"):
     """统一坐标轴外观 / Apply a compact paper style."""
-    if title:
+    if title and SHOW_TITLES:
         ax.set_title(title, fontproperties=font_cn)
     if xlabel:
         ax.set_xlabel(xlabel, fontproperties=font_cn)
@@ -163,6 +164,11 @@ def apply_axis_style(ax, *, xlabel=None, ylabel=None, title=None, grid_axis="y")
         alpha=GRID_ALPHA,
     )
     ax.set_axisbelow(True)
+
+
+def remove_vertical_grid(ax):
+    """关闭竖向网格线 / Disable vertical grid lines."""
+    ax.grid(False, axis="x")
 
 
 def annotate_bars(ax, *, fmt="{:.0f}", offset=0.6, font_prop=font_times):
@@ -264,6 +270,7 @@ apply_axis_style(
     title="(a) 全部样本回归关系",
     grid_axis="both",
 )
+remove_vertical_grid(ax5_1)
 style_numeric_ticks(ax5_1)
 
 ax5_2.scatter(
@@ -305,6 +312,7 @@ apply_axis_style(
     title="(b) 主体分布与高值异常点",
     grid_axis="both",
 )
+remove_vertical_grid(ax5_2)
 style_numeric_ticks(ax5_2)
 
 fig5.tight_layout()
@@ -681,6 +689,7 @@ apply_axis_style(
     title="修复周期累积分布",
     grid_axis="both",
 )
+remove_vertical_grid(ax_cdf_2)
 style_numeric_ticks(ax_cdf_2)
 fig_cdf_2.tight_layout()
 save_figure(fig_cdf_2, SCRIPT_DIR, "fig_3_cdf_of_fixing_time.png")
@@ -708,6 +717,7 @@ apply_axis_style(
     title="修复周期与文本量关系",
     grid_axis="both",
 )
+remove_vertical_grid(ax2_1)
 style_numeric_ticks(ax2_1)
 fig2_1.tight_layout()
 plt.show()
@@ -745,6 +755,7 @@ apply_axis_style(
     title="修复周期与文本量的排序趋势",
     grid_axis="y",
 )
+remove_vertical_grid(ax2_2)
 ax2_2.tick_params(axis="y", labelcolor=BLUE_COLOR_DEFAULT)
 style_numeric_ticks(ax2_2)
 
@@ -1038,6 +1049,7 @@ for x in [20, 40, 60, 80]:
     ax_d_hist.axvline(x=x, linestyle=GRID_LINESTYLE, linewidth=1, color="gray")
 
 apply_axis_style(ax_d_hist, xlabel="D值（0-100）", ylabel="错误数量", title="修复难度得分分布", grid_axis="y")
+remove_vertical_grid(ax_d_hist)
 style_numeric_ticks(ax_d_hist)
 fig_d_hist.tight_layout()
 save_figure(fig_d_hist, SCRIPT_DIR, "d_score_histogram.png")
@@ -1062,6 +1074,7 @@ ax_grade_count.bar(
     linewidth=0.8,
 )
 apply_axis_style(ax_grade_count, xlabel="难度等级", ylabel="错误数量", title="修复难度分级统计", grid_axis="y")
+remove_vertical_grid(ax_grade_count)
 style_chinese_ticks(ax_grade_count)
 style_numeric_ticks(ax_grade_count, axis="y")
 annotate_bars(ax_grade_count, offset=0.5)
@@ -1087,6 +1100,7 @@ ax_grade_ratio.bar(
     linewidth=0.8,
 )
 apply_axis_style(ax_grade_ratio, xlabel="难度等级", ylabel="占比（%）", title="修复难度分级占比", grid_axis="y")
+remove_vertical_grid(ax_grade_ratio)
 style_chinese_ticks(ax_grade_ratio)
 style_numeric_ticks(ax_grade_ratio, axis="y")
 for patch, val in zip(ax_grade_ratio.patches, grade_ratio.values):
